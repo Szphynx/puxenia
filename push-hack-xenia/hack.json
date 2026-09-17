@@ -1,0 +1,10 @@
+{
+  "id": "push-xenia",
+  "name": "Xenia",
+  "description": "Waldorf Microwave XT emulation (gearmulator's xtLib) running as a Move Anything plugin_api_v2 DSP module. Reads Push 3's own pad MIDI and renders audio into push-audio-loopback's virtual card. 82 params across 11 real Microwave XT sections (OSC/MIXER/FILTER/FILTER ENV/AMP/LFO1/LFO2/GLOBAL/FREE ENV/ARP/WAVE MOD), split into 2 banks of 8 pages flipped with D-Pad Left/Right, plus PRESETS/SETTINGS. Live CPU%/active-voice diagnostics in the browser UI header. Needs push-audio-loopback (waits for it at startup and after every restart) and push-manager + push-display for on-screen encoder controls.",
+  "version": "0.2.0",
+  "author": "Sphynx",
+  "binary": "push-xenia",
+  "enabled": true,
+  "web_ui": { "label": "Xenia", "path": "/" }
+}
