@@ -283,6 +283,29 @@ namespace
 		inst->device->sendMidiEvent(ev);
 	}
 
+	// sendGlobalParamChange sends a GLBP (Global Parameter Change, IDM
+	// 0x24h per the Microwave 2 System Exclusive spec) SysEx -- format
+	// F0 3E 0E DEV 24h PP XX F7, no checksum (the spec notes parameter-
+	// change messages omit it). DEV=0x7F is the broadcast device number,
+	// always accepted regardless of the receiving unit's own configured
+	// "Device ID" global parameter -- safer than guessing DEV=0x00 and
+	// being silently ignored if it's ever been changed from factory
+	// default.
+	void sendGlobalParamChange(XeniaInstance *inst, uint8_t paramIndex, uint8_t value)
+	{
+		synthLib::SMidiEvent ev(synthLib::MidiEventSource::Host);
+		auto &sx = ev.sysex;
+		sx.push_back(0xF0);
+		sx.push_back(0x3E); // Waldorf Electronics GmbH ID
+		sx.push_back(0x0E); // Microwave 2 ID
+		sx.push_back(0x7F); // DEV: broadcast
+		sx.push_back(0x24); // IDM: GLBP
+		sx.push_back(paramIndex);
+		sx.push_back(value);
+		sx.push_back(0xF7);
+		inst->device->sendMidiEvent(ev);
+	}
+
 	void trackNoteOn(XeniaInstance *inst, uint8_t note)
 	{
 		for(auto &n : inst->activeNotes)
@@ -456,6 +479,23 @@ namespace
 
 			for(const auto &p : kParams)
 				inst->paramValues[p.key] = p.defaultV;
+
+			// Hypothesis fix for "moving parameters does nothing except
+			// program change": Global Parameter index 27 ("Parameter
+			// receive" per the SysEx spec's GDATA table) gates whether the
+			// device accepts incoming MIDI parameter changes at all. If it
+			// defaults to off, every CC-based set_param below would be
+			// silently ignored while Program Change (an ordinary channel-
+			// voice message, unrelated to this gate) keeps working --
+			// exactly the reported symptom. Force it on at boot. NOT yet
+			// confirmed against real hardware; if params still don't
+			// respond after this, this wasn't the cause and the CC chart
+			// mapping itself needs re-checking instead. A few extra
+			// process() calls give the device time to consume the queued
+			// SysEx before returning (sendMidiEvent only queues it).
+			sendGlobalParamChange(inst, 27, 1);
+			for(int i = 0; i < 50; ++i)
+				inst->device->process(kNativeBlock);
 		}
 		catch(const std::exception &e)
 		{
@@ -528,9 +568,15 @@ namespace
 		{
 			inst->paramValues[key] = v;
 			if(def->outCC == kProgramSentinel)
+			{
+				fprintf(stdout, "[xenia_plugin] set_param %s=%u -> ProgramChange %u (ch10)\n", key, v, v);
 				sendToDevice(inst, static_cast<uint8_t>(0xC0 | kWorkingChannel0Indexed), v, 0);
+			}
 			else if(def->outCC != 0)
+			{
+				fprintf(stdout, "[xenia_plugin] set_param %s=%u -> CC%u=%u (ch10)\n", key, v, def->outCC, v);
 				sendToDevice(inst, static_cast<uint8_t>(0xB0 | kWorkingChannel0Indexed), def->outCC, v);
+			}
 			// outCC == 0: tracked on screen/web UI only -- see kParams'
 			// header comment for why (no verified CC to send yet).
 		}

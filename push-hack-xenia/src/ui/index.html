@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xenia</title>
+<style>
+  /*
+   * Palette lifted straight from the two themes the Push screen itself
+   * uses (src/display.go's mutableTheme for OSC/AMP·FILTER·CRUSH/QUANT·
+   * AD/DRIFT·PRESET, core/gfx/widgets.Default for SETTINGS/I-O) — same
+   * hex values, so this page reads as the same instrument, not a
+   * generic web skin bolted on.
+   */
+  :root {
+    --beige: #F2EFE9;   /* mutableBeige — panel background */
+    --track: #D9D3C4;   /* mutableTrack — empty knob track / strip bg */
+    --ink:   #000000;   /* mutableBlack — text/knob fill on beige */
+    --magenta: #B31748; /* mutableMagenta — "Color" params */
+    --green:   #1A7877; /* mutableGreen — "Timbre"/"FM" params, loaded preset */
+    --yellow:  #FADC3B; /* push3 "yellow" — engine/enum inset readout */
+    --panel-dark: #141414; /* widgets.Default.DarkGray — SETTINGS background */
+    --cobalt:     #1853B2; /* widgets.Default.Select — SETTINGS cursor/accent */
+    --lgray:      #CCCCCC; /* widgets.Default.CrumbCol */
+    --on:  #62FF55; /* widgets.Default.OnColor — audio ready */
+    --off: #FF4032; /* widgets.Default.OffColor — audio not ready */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--beige);
+    color: var(--ink);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  header {
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--beige);
+    border-bottom: 2px solid var(--ink);
+  }
+  header h1 {
+    font-size: 15px;
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  #status {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: var(--track);
+  }
+  #status.ready { background: var(--on); color: var(--ink); }
+  #status.notready { background: var(--off); color: var(--beige); }
+
+  main { max-width: 760px; margin: 0 auto; padding: 0 0 32px; }
+
+  /* Page tabs — same uppercase-label-row idea as renderTopTabs' physical
+     top-screen buttons: inactive = beige, active = ink bar with beige
+     text (the exact reversal SoftOn draws on-screen). */
+  #tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 8px 16px 0;
+  }
+  .tab {
+    appearance: none;
+    border: none;
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: var(--track);
+    color: var(--ink);
+    cursor: pointer;
+    border-radius: 3px 3px 0 0;
+  }
+  .tab.active { background: var(--ink); color: var(--beige); }
+
+  .page { display: none; padding: 16px; }
+  .page.active { display: block; }
+
+  .row {
+    display: grid;
+    grid-template-columns: 132px 1fr 60px;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--track);
+  }
+  .row:last-child { border-bottom: none; }
+  .row label {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .row .val {
+    text-align: right;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+
+  /* Continuous float/int params: plain slider, ink fill on beige track —
+     DrawKnobArc's own fill-on-track look, just linear instead of radial. */
+  input[type=range] {
+    width: 100%;
+    accent-color: var(--ink);
+  }
+  .row.accent-green input[type=range] { accent-color: var(--green); }
+  .row.accent-magenta input[type=range] { accent-color: var(--magenta); }
+
+  /* Enum params: renderEngineInset's small dark-box/yellow-text readout,
+     reused as a <select>'s resting look. */
+  select.enum {
+    width: 100%;
+    background: var(--ink);
+    color: var(--yellow);
+    border: none;
+    border-radius: 3px;
+    padding: 7px 8px;
+    font-weight: 700;
+    font-size: 12px;
+  }
+
+  /* PRESET page: the loaded preset reads in the same green
+     renderPresetsPage now uses on-screen; the row picker itself is the
+     enum <select> above. */
+  #preset-loaded {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--green);
+    padding: 4px 0 12px;
+  }
+
+  /* I/O / SETTINGS — deliberately the OTHER theme: Push's SETTINGS page
+     is the one screen that stays on the framework's black background
+     instead of the beige panel (iopage.go), so this section switches
+     look to match rather than forcing everything into one palette. */
+  #io {
+    background: var(--panel-dark);
+    color: var(--lgray);
+    margin: 16px 16px 0;
+    border-radius: 4px;
+    padding: 14px 16px;
+  }
+  #io h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--lgray);
+    margin: 0 0 10px;
+    opacity: 0.7;
+  }
+  .io-row { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; padding: 6px 0; }
+  .io-row label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  select.io {
+    width: 100%;
+    background: #1c1c1c;
+    color: var(--lgray);
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 6px 8px;
+  }
+  select.io:focus { outline: 2px solid var(--cobalt); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Xenia</h1>
+  <span id="status">connecting…</span>
+  <span id="diag" title="CPU% of one core, active voice count">—</span>
+</header>
+<main>
+  <nav id="tabs"></nav>
+  <div id="pages"></div>
+  <section id="io">
+    <h2>Settings</h2>
+    <div class="io-row"><label>MIDI IN</label><select class="io" id="io-midi"></select></div>
+    <div class="io-row"><label>Audio Out</label><select class="io" id="io-pcm"></select></div>
+    <div class="io-row"><label>Channel</label><select class="io" id="io-channel"></select></div>
+  </section>
+</main>
+<script>
+"use strict";
+
+// paramMeta cache (key/name/type/min/max/options), fetched once — values
+// come from the live SSE stream instead, so this never needs a refetch.
+let metas = {};
+// pages groups params the same way the Push screen's own top-tab pages do
+// (OSC/AMP, FILTER, CRUSH/QUANT, AD/DRIFT, PRESET) — see params.go's
+// webParamPages, which reuses paramPages/pageNames rather than the web UI
+// inventing its own grouping.
+let pages = [];
+let activeTab = 0;
+
+// A control the user is currently interacting with is skipped on the next
+// SSE update, so an incoming server value doesn't yank it out from under
+// an in-progress drag/click — keyed by param key for param rows, by
+// element id for the I/O selects.
+const touching = new Set();
+
+// accentClass mirrors display.go's knobColor(): Timbre/FM green, Color
+// magenta, everything else the default ink fill.
+function accentClass(key) {
+  if (key === "timbre" || key === "fm") return "accent-green";
+  if (key === "color") return "accent-magenta";
+  return "";
+}
+
+function buildParamRow(meta) {
+  const row = document.createElement("div");
+  row.className = "row " + accentClass(meta.key);
+  row.dataset.key = meta.key;
+
+  const label = document.createElement("label");
+  label.textContent = meta.name || meta.key;
+  row.appendChild(label);
+
+  let control;
+  if (meta.type === "enum") {
+    control = document.createElement("select");
+    control.className = "enum";
+    (meta.options || []).forEach((opt, i) => {
+      const o = document.createElement("option");
+      o.value = i;
+      o.textContent = opt;
+      control.appendChild(o);
+    });
+    control.addEventListener("focus", () => touching.add(meta.key));
+    control.addEventListener("blur", () => touching.delete(meta.key));
+    control.addEventListener("change", () => setParam(meta.key, Number(control.value)));
+  } else {
+    control = document.createElement("input");
+    control.type = "range";
+    control.min = meta.min;
+    control.max = meta.max;
+    control.step = meta.type === "int" ? 1 : (meta.max - meta.min) / 200 || 0.001;
+    control.addEventListener("pointerdown", () => touching.add(meta.key));
+    control.addEventListener("pointerup", () => touching.delete(meta.key));
+    control.addEventListener("input", () => {
+      setParam(meta.key, Number(control.value));
+      row.querySelector(".val").textContent = control.value;
+    });
+  }
+  control.className += " control";
+  row.appendChild(control);
+
+  const val = document.createElement("span");
+  val.className = "val";
+  row.appendChild(val);
+
+  // "preset" gets its loaded-name readout below the picker, same "this is
+  // what's actually loaded, distinct from what's highlighted" split
+  // renderPresetsPage draws on-screen.
+  if (meta.key === "preset") {
+    const wrap = document.createElement("div");
+    const loaded = document.createElement("div");
+    loaded.id = "preset-loaded";
+    wrap.appendChild(row);
+    wrap.appendChild(loaded);
+    return wrap;
+  }
+  return row;
+}
+
+function buildTabs() {
+  const tabs = document.getElementById("tabs");
+  const pagesEl = document.getElementById("pages");
+  tabs.innerHTML = "";
+  pagesEl.innerHTML = "";
+  pages.forEach((page, i) => {
+    const tab = document.createElement("button");
+    tab.className = "tab" + (i === activeTab ? " active" : "");
+    tab.textContent = page.name;
+    tab.addEventListener("click", () => {
+      activeTab = i;
+      document.querySelectorAll(".tab").forEach((t, ti) => t.classList.toggle("active", ti === i));
+      document.querySelectorAll(".page").forEach((p, pi) => p.classList.toggle("active", pi === i));
+    });
+    tabs.appendChild(tab);
+
+    const pageEl = document.createElement("div");
+    pageEl.className = "page" + (i === activeTab ? " active" : "");
+    page.keys.forEach((key) => {
+      const meta = metas[key];
+      if (meta) pageEl.appendChild(buildParamRow(meta));
+    });
+    pagesEl.appendChild(pageEl);
+  });
+}
+
+function applyParamValue(key, snap) {
+  if (touching.has(key)) return;
+  const row = document.querySelector(`.row[data-key="${CSS.escape(key)}"]`);
+  if (!row) return;
+  const control = row.querySelector(".control");
+  if (document.activeElement === control) return;
+  if (control.tagName === "SELECT") {
+    control.value = Math.round(snap.value);
+  } else {
+    control.value = snap.value;
+  }
+  row.querySelector(".val").textContent = snap.display;
+
+  if (key === "preset") {
+    const loadedEl = document.getElementById("preset-loaded");
+    if (loadedEl) loadedEl.textContent = "Loaded: " + snap.display;
+  }
+}
+
+async function setParam(key, value) {
+  try {
+    await fetch(`/api/params/${encodeURIComponent(key)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
+  } catch (e) {
+    console.error("setParam failed", key, e);
+  }
+}
+
+// ioOptionsKey turns an options list into a cheap fingerprint so
+// buildIOSelect can skip rebuilding <option>s (and the "current" selection)
+// when nothing actually changed — rebuilding on every ~100ms SSE tick was
+// resetting the <select>'s open/closed state out from under the user,
+// making a dropdown impossible to use (it snapped shut/reopened before a
+// click could register).
+function ioOptionsKey(options) {
+  return options.map((o) => o.label + (o.current ? "*" : "")).join("\n");
+}
+
+const ioSelectState = {}; // id -> last-applied options fingerprint
+
+function buildIOSelect(id, options) {
+  const el = document.getElementById(id);
+  const key = ioOptionsKey(options);
+  if (ioSelectState[id] === key) return; // no change — leave the DOM alone
+  if (touching.has(id)) return; // user has this dropdown open right now
+  ioSelectState[id] = key;
+  el.innerHTML = "";
+  options.forEach((opt, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = opt.label;
+    if (opt.current) o.selected = true;
+    el.appendChild(o);
+  });
+}
+
+async function setIO(kind, index) {
+  try {
+    await fetch(`/api/io/${kind}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index }),
+    });
+  } catch (e) {
+    console.error("setIO failed", kind, e);
+  }
+}
+
+let ioWired = false;
+function applyIO(io) {
+  buildIOSelect("io-midi", io.midi || []);
+  buildIOSelect("io-pcm", io.device || []);
+  buildIOSelect("io-channel", io.channel || []);
+  if (!ioWired) {
+    for (const [id, kind] of [["io-midi", "midi"], ["io-pcm", "pcm"], ["io-channel", "channel"]]) {
+      const el = document.getElementById(id);
+      el.addEventListener("focus", () => touching.add(id));
+      el.addEventListener("blur", () => {
+        touching.delete(id);
+        ioSelectState[id] = null; // force a resync now that the user let go
+      });
+      el.addEventListener("change", (e) => setIO(kind, Number(e.target.value)));
+    }
+    ioWired = true;
+  }
+}
+
+function applyAudioStatus(audio) {
+  const el = document.getElementById("status");
+  el.className = audio.ready ? "ready" : "notready";
+  el.textContent = audio.ready ? "Running" : (audio.message || "Not ready").split("\n")[0];
+}
+
+// applyDiag: CPU%/voice-count readout, updated every ~2s (same cadence as
+// audiosession.go's progress log) — real headroom numbers for judging
+// whether a heavier future emulation would fit.
+function applyDiag(diag) {
+  const el = document.getElementById("diag");
+  const cpu = typeof diag.cpuPercent === "number" ? diag.cpuPercent.toFixed(1) : "?";
+  const voices = typeof diag.activeVoices === "number" ? diag.activeVoices : "?";
+  el.textContent = `CPU ${cpu}% · voices ${voices}`;
+}
+
+let pagesBuilt = false;
+function applyState(state) {
+  if (!pagesBuilt && pages.length) {
+    buildTabs();
+    pagesBuilt = true;
+  }
+  for (const [key, snap] of Object.entries(state.params || {})) {
+    applyParamValue(key, snap);
+  }
+  applyIO(state.io || {});
+  applyAudioStatus(state.audio || {});
+  applyDiag(state.diag || {});
+}
+
+async function init() {
+  const data = await (await fetch("/api/params")).json();
+  metas = Object.fromEntries((data.params || []).map((m) => [m.key, m]));
+  pages = data.pages || [];
+
+  const es = new EventSource("/sse/state");
+  es.onmessage = (ev) => applyState(JSON.parse(ev.data));
+  es.onerror = () => {
+    document.getElementById("status").className = "notready";
+    document.getElementById("status").textContent = "Disconnected — retrying…";
+  };
+}
+
+init();
+</script>
+</body>
+</html>
