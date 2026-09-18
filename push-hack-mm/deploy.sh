@@ -36,7 +36,15 @@ if ! compgen -G "$DIST_DIR/module/roms/*.bin" > /dev/null; then
 fi
 
 echo "== Stopping any running push-mm on $PUSH_IP =="
-ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" "pkill -f push-mm || true"
+# -x (exact process-name match), not -f (full command-line match): "pkill
+# -f push-mm" run as a one-shot ssh command executes as `bash -c 'pkill -f
+# push-mm || true'` remotely, and that wrapping bash's own command line
+# contains the literal substring "push-mm" -- pkill -f can match and kill
+# that shell itself before it reaches "|| true", dropping the ssh session
+# and aborting this script (deploy.sh's set -e) with no further output.
+# -x matches only the actual push-mm binary's process name, never the
+# shell invoking pkill.
+ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" "pkill -x push-mm || true"
 
 echo "== Copying to $PUSH_IP:$REMOTE_DIR =="
 ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" "mkdir -p $REMOTE_DIR/module/roms"
