@@ -53,15 +53,18 @@ const (
 // plus PRESETS. SETTINGS and the "not ready" OSD stay on the framework's
 // usual black background (widgets.Default), same as before.
 var (
-	xtChassis = color.NRGBA{R: 0xC6, G: 0xC8, B: 0xC4, A: 255} // light grey/silver panel
-	xtInk     = color.NRGBA{R: 0x1E, G: 0x28, B: 0x3C, A: 255} // dark navy print
+	// Inverted from the panel's actual silkscreen colors: dark navy fill
+	// behind light/amber ink, matching a backlit LCD rather than the
+	// printed chassis — legible on Push's screen instead of washed out.
+	xtChassis = color.NRGBA{R: 0x1E, G: 0x28, B: 0x3C, A: 255} // dark navy panel fill
+	xtInk     = color.NRGBA{R: 0xC6, G: 0xC8, B: 0xC4, A: 255} // light grey/silver print
 	xtAmber   = color.NRGBA{R: 0xFF, G: 0x8C, B: 0x28, A: 255} // LCD/LED glow
-	xtBlue    = color.NRGBA{R: 0x23, G: 0x46, B: 0x8C, A: 255} // Waldorf corporate blue — filter section
-	xtTeal    = color.NRGBA{R: 0x1A, G: 0x78, B: 0x77, A: 255} // LFO section
-	// xtTrack: a muted darker grey for a knob's empty track / the bottom
-	// strip's background — plain grey-on-grey would make both invisible
+	xtBlue    = color.NRGBA{R: 0x5A, G: 0x84, B: 0xE0, A: 255} // Waldorf corporate blue — filter section
+	xtTeal    = color.NRGBA{R: 0x3C, G: 0xC4, B: 0xC2, A: 255} // LFO section
+	// xtTrack: a muted lighter navy for a knob's empty track / the bottom
+	// strip's background — plain navy-on-navy would make both invisible
 	// against the panel fill.
-	xtTrack = color.NRGBA{R: 0xA8, G: 0xAA, B: 0xA6, A: 255}
+	xtTrack = color.NRGBA{R: 0x33, G: 0x3E, B: 0x54, A: 255}
 )
 
 // xtTheme maps the palette above onto widgets.Theme's fields: Select (a

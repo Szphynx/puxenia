@@ -30,18 +30,15 @@
  *     the calls the host invokes every block/instance/message so a
  *     construction or rendering fault can't take the whole host process
  *     down.
- *   - Live parameters -- program (patch select), filter cutoff, and
- *     resonance -- exposed via chain_params/get_param/set_param so the
- *     Go host's own on-screen encoder UI and web UI can drive them (see
- *     push-hack-xenia's params.go: paramPages["XENIA"] = {"program",
- *     "cutoff", "resonance"}). NOT reachable via raw incoming MIDI CC:
- *     push-braids/push-xenia's main.go only ever forwards Note On/Off to
- *     on_midi -- every CC (including Push's own encoders) is consumed
- *     entirely inside the Go host for its own UI and turned into
- *     set_param calls instead. cutoff/resonance are still forwarded
- *     *outbound* to the device as ordinary CC 74/71 (kFilterCutoffCC/
- *     kResonanceCC) from xenia_set_param -- that direction has nothing to
- *     do with what on_midi receives.
+ *   - All 82 live parameters (kParams below) are exposed via
+ *     chain_params/get_param/set_param so the Go host's own on-screen
+ *     encoder UI and web UI can drive them. NOT reachable via raw
+ *     incoming MIDI CC: push-xenia's main.go only ever forwards Note
+ *     On/Off to on_midi -- every CC (including Push's own encoders) is
+ *     consumed entirely inside the Go host for its own UI and turned
+ *     into set_param calls instead, which then send the corresponding
+ *     outbound CC (per kParams' outCC) to the device -- that direction
+ *     has nothing to do with what on_midi receives.
  */
 
 #include <cstdint>
@@ -78,13 +75,6 @@ namespace
 	// this is fixing. 3 blocks * 64 frames = 192 native frames of margin
 	// (well under a millisecond of extra latency at 40kHz native rate).
 	constexpr int kLookaheadFrames = kNativeBlock * 3;
-
-	// Outbound CC numbers used by xenia_set_param to reach the device's own
-	// MIDI implementation -- the conventional filter-cutoff/resonance CC
-	// numbers most synth MIDI implementations use. Unrelated to on_midi's
-	// inbound handling (see file header comment) -- these only ever go out.
-	constexpr uint8_t kFilterCutoffCC = 74;
-	constexpr uint8_t kResonanceCC = 71;
 
 	// Safety ceiling: -6dBFS. Not a look-ahead limiter, just a fixed
 	// headroom cut so nothing unexpected from this bridge (stuck voices,
