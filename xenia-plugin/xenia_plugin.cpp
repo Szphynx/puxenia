@@ -55,7 +55,29 @@
 #include "xtLib/xt.h"
 #include "xtLib/xtRomLoader.h"
 #include "dsp56kBase/logging.h"
+#include "cpu/mc68k/logging.h"
 #include "libresample.h"
+
+// mc68k::logToConsole (MCLOG, used by xtPic.cpp for every LCD content
+// change -- boot animation, preset-name scrolling) has no Logging::setLogFunc-
+// style hook like dsp56kBase's does; its implementation is a hardcoded
+// fputs(..., stderr) with no override point. It used to be treated as
+// harmless noise, but on real hardware the SLOW BLOCK warnings during boot
+// and preset changes line up exactly with LCD text scrolling: each MCLOG
+// call is a synchronous, unbuffered stderr write on the real-time render
+// thread, and over an SSH pipe (not a local tty) that write can block long
+// enough to blow the ~2.7ms block budget by 2-4x -- this is what "the
+// interface goes incredibly slow when changing presets" and part of the
+// reported audio glitching actually was. mc68k::logToConsole is a plain
+// (non-weak) symbol in a static archive (libwLib.a); providing our own
+// definition here, in an object file linked directly rather than pulled
+// from the archive, makes the linker resolve the symbol to this one and
+// never pull in the archive's version -- the standard static-library
+// override trick, not a source patch to gearmulator itself.
+namespace mc68k
+{
+	void logToConsole(const std::string &) {}
+}
 
 namespace
 {
