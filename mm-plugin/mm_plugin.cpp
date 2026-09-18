@@ -425,14 +425,33 @@ namespace
 
 	// toggleStep is the pad-grid grid-editing primitive: switches to
 	// _track (if not already selected — see selectTrack) then taps that
-	// step's trig key. See this file's header comment for the "no
-	// separate grid-record mode assumed" caveat.
+	// step's trig key while Grid Record is held. Real Monomachine gates
+	// trig-key step-editing behind Grid Record mode (Record's own red
+	// LED) -- confirmed via docs/monomachine-hardware-parity-todo.md's
+	// research citing Elektron's own quick-start guide ("You enter Grid
+	// mode by hitting the Record button, whereupon its red LED will
+	// light"). Necessary, but PROVEN NOT SUFFICIENT by itself: a real-ROM
+	// dlopen test (this fix's own commit) shows panel_state's per-step
+	// LED still reads unchanged after this exact sequence, even though
+	// the LCD content DOES change (so the panel UART is receiving
+	// *something*) -- press+tapControl+release here all happen as one
+	// synchronous C++ call with ZERO elapsed device-time between them,
+	// whereas gearmulator-md-mm's own mdLibTest tap() helper always
+	// advances real device time (2048 samples) between a panel press and
+	// its release. This bridge has no render-time budget available
+	// inside a set_param call to do the same safely (mm_render_block
+	// owns the only audio-producing advance, and stealing samples here
+	// would desync the host's real-time audio scheduling) -- grid step
+	// programming remains open, needs real design work, not a one-line
+	// fix. See docs/monomachine-hardware-parity-todo.md.
 	void toggleStep(MmInstance *inst, int track, int step)
 	{
 		if(step < 0 || step >= kNumSteps)
 			return;
 		selectTrack(inst, track);
+		pressControl(inst, md::PanelControl::Record);
 		tapControl(inst, triggerControl(step));
+		releaseControl(inst, md::PanelControl::Record);
 	}
 
 	// applyTrackParam sets one of kParams for an explicit track (not
