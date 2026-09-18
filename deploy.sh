@@ -69,7 +69,11 @@ if ! ssh_ "lsmod | grep -q snd_aloop"; then
         echo "   on every reboot -- see push-hack-audio-loopback/README.md to install"
         echo "   it properly instead)."
         scp_ "$KO_LOCAL" "root@${PUSH_HOST}:$REMOTE_DIR/snd-aloop.ko"
-        ssh_ "insmod $REMOTE_DIR/snd-aloop.ko"
+        # id=PHVAudio names the card "PHVAudio" (push-xenia's cardPresent()
+        # check looks for exactly that name, per push-hack-audio-loopback's
+        # own src/main.go); a bare insmod creates a card named "Loopback"
+        # instead and push-xenia never finds it.
+        ssh_ "insmod $REMOTE_DIR/snd-aloop.ko id=PHVAudio timer_source=A3.0.0"
     else
         echo "   WARNING: no bundled snd-aloop.ko for kernel $KVER in $ALOOP_KO_DIR --"
         echo "   audio loopback will not work. See push-hack-audio-loopback/README.md"
