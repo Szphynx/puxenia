@@ -9,6 +9,78 @@ not full-manual-verified. Treat unverified items the same way
 `monomachine-port-notes.md` already treats its own open assumptions: don't
 re-guess them, go straight to hardware/manual when available.
 
+## Full sequencing audit (requested before further real-hardware testing)
+
+Went through every sequencing-related path end to end (`seq.go`,
+`doTransport`, `mm_plugin.cpp`'s panel/transport handling, `main.go`'s pad
+routing, `leds.go`, `webserver.go`'s `/api/seq/*` + `/api/transport` —
+the web UI routes through the exact same `ctlToggleStep`/`ctlMuteToggle`/
+`ctlTransport` events as the pads, so it shares fixes and bugs with them,
+not a separate code path). Findings:
+
+- [x] **Play/Stop/Record buttons (`doTransport`) DO register**, verified
+  empirically — unlike the trigger-key tap bug above, a zero-elapsed-time
+  press+release of the Play panel button reliably started something real:
+  `panel_state` changed continuously on its own for 10+ seconds afterward
+  (a clean control run with no Play press showed zero spontaneous change
+  over the same window). Not every panel control needed the deferred-
+  release fix — Play/Stop appear to register synchronously just fine.
+- [ ] **`seqState.ToggleStep`'s plain boolean model is provably wrong.**
+  Confirmed via the same real-ROM test that proved grid editing now
+  reaches the device (see above): tapping the same step twice in a row
+  left its panel-readback color unchanged both times — it did NOT toggle
+  back to 0. This host's own shadow (`seq.go`) still flips a plain bool
+  on every tap, so after 2 taps on the same step this shadow reads "off"
+  while the real device almost certainly still reads whatever
+  cycled-through state it landed on. Needs live-hardware-informed
+  testing (repeatedly tap the same pad on real Push, see what the real
+  LED does) before changing `seqState`'s model — don't guess a fix.
+- [ ] **`toggle_mute` (see "needs verification" below) is the other open
+  item from this pass** — CC reaches the device, real muting effect not
+  confirmed.
+- [x] **Web UI's `/api/seq/step`, `/api/seq/mute`, `/api/transport`
+  handlers are just thin wrappers around the same control events the
+  pads use** (`webserver.go`'s `handleSeqStep`/`handleSeqMute`/
+  `handleTransport`) — no separate bug surface there, they inherit
+  whatever pad-path fixes/bugs apply.
+
+## Ableton Live transport sync (new feature, investigated, NOT working yet)
+
+Requested: puMMa's sequencer should start/stop with Ableton's own global
+transport, and reset when Live stops.
+
+- Real Monomachine firmware very likely supports MIDI realtime transport
+  sync (Clock/Start/Continue/Stop, 0xF8-0xFF) as a genuine hardware
+  feature — confirmed this is deliberately modeled, not guessed:
+  `mdhardware.cpp`'s MIDI-in byte pump computes the wire byte count from
+  the status byte itself (1 byte for status ≥0xF0, correctly ignoring
+  any stray data bytes), and a separate `pumpRealtime()` path lets these
+  bytes cross ahead of other queued MIDI mid-stream — exactly how real
+  hardware treats realtime bytes. `mm_plugin.cpp`'s `mm_on_midi` was
+  the only thing blocking them (an explicit channel-voice-only filter);
+  now forwards status ≥0xF8 straight through.
+- **Tested against the real ROM, negative result**: sending a raw MIDI
+  Start (0xFA) did NOT start the sequencer — `panel_state` stayed static
+  for 5+ seconds afterward, unlike a genuine Play button press. Most
+  likely explanation: real Monomachine's Global settings almost
+  certainly default its Clock Source to Internal (standard for hardware
+  sequencers of this era), and needs that explicitly switched to
+  External/Auto before it'll honor incoming transport bytes at all —
+  not yet found how (SysEx global-parameter write, or a panel/menu
+  navigation sequence — needs real research, not a guess).
+- **Separately unsolved**: even once Monomachine itself can be made to
+  listen, this host has no confirmed way to detect Ableton's OWN
+  transport state to forward it in the first place. `pmclient`'s entire
+  API surface is `SetMode`/`PushImage`/`DisplayStatus`/`SetMidiFilter`/
+  `Tempo` — no transport/play-state endpoint. push-manager may expose
+  more than pmclient wraps (unconfirmed, no access to its own source
+  from this session), or Live's own MIDI Clock/transport output could be
+  routed to puMMa's existing MIDI-in port instead (requires the user's
+  own Live-side Sync preferences, not something this bridge controls).
+  Two real unknowns, not one — scope this properly (its own doc, like
+  `push-hub-proposal.md`) before implementing rather than half-building
+  a feature on unconfirmed assumptions in both directions.
+
 ## Confirmed real, not yet matched in code
 
 - [x] **Grid Recording is a real, separate mode gated by Record — gate

@@ -647,6 +647,25 @@ namespace
 
 		try
 		{
+			// MIDI realtime (Clock/Start/Continue/Stop, 0xF8-0xFF, single
+			// byte, no channel) forwarded straight through so real Monomachine
+			// firmware's own MIDI transport-sync can drive Play/Stop/reset --
+			// confirmed this is a real, deliberately modeled hardware feature
+			// (not guessed): mdhardware.cpp's pumpGeneralFront() computes
+			// byteCount from the status byte itself (1 for status >= 0xf0,
+			// never the 3 a stray d1/d2 might otherwise imply), and a
+			// separate pumpRealtime() path lets these bytes cross ahead of
+			// other MIDI traffic mid-stream -- exactly how real hardware
+			// treats realtime bytes, not something this bridge added.
+			// queueMidi always takes 3 bytes; d1/d2=0 here is safe precisely
+			// because that same byteCount logic ignores them for a >=0xf0
+			// status (only the status byte itself is ever put on the wire).
+			if(status >= 0xF8)
+			{
+				queueMidi(inst, status, 0, 0);
+				return;
+			}
+
 			// Every channel-voice message (Note On/Off, Poly/Channel
 			// Pressure, Pitch Bend) from the host is "play the currently
 			// selected track live" — remapped to that track's own MIDI
