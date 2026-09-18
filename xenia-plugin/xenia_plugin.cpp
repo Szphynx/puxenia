@@ -92,7 +92,8 @@ namespace
 	struct PerChannelResampler
 	{
 		void *handle = nullptr;
-		std::vector<float> pending; // resampled output not yet consumed by render_block
+		std::vector<float> pending;  // resampled output not yet consumed by render_block
+		std::vector<float> leftover; // input samples libresample didn't consume last call
 
 		void open(double factor)
 		{
@@ -107,6 +108,7 @@ namespace
 			if(handle) resample_close(handle);
 			handle = resample_open(1, factor, factor);
 			pending.clear();
+			leftover.clear();
 		}
 		~PerChannelResampler()
 		{
@@ -448,13 +450,27 @@ namespace
 
 		auto resampleOne = [&](PerChannelResampler &r, std::vector<float> &in)
 		{
+			// libresample does not promise to consume its entire input
+			// buffer in one resample_process call -- inBufferUsed can be
+			// less than what was passed in. Silently feeding a fresh
+			// kNativeBlock every call (as this used to do) discarded
+			// whatever was left unconsumed each time: a small, regular
+			// sample loss every block, which is exactly what "chopped up,
+			// garbled, digital interference" sounds like. Carry the
+			// unconsumed remainder forward instead, same as gearmulator's
+			// own synthLib::Resampler::processResample.
+			r.leftover.insert(r.leftover.end(), in.begin(), in.end());
+
 			float outBuf[kNativeBlock * 8]; // generous headroom for any upsample factor this project will hit
 			int inUsed = 0;
 			const int outN = resample_process(r.handle, inst->resampleFactor,
-				in.data(), static_cast<int>(in.size()), 0,
+				r.leftover.data(), static_cast<int>(r.leftover.size()), 0,
 				&inUsed, outBuf, static_cast<int>(std::size(outBuf)));
 			if(outN > 0)
 				r.pending.insert(r.pending.end(), outBuf, outBuf + outN);
+
+			if(inUsed > 0)
+				r.leftover.erase(r.leftover.begin(), r.leftover.begin() + inUsed);
 		};
 		resampleOne(inst->resampL, inst->nativeL);
 		resampleOne(inst->resampR, inst->nativeR);
