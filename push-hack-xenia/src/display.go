@@ -136,7 +136,7 @@ func renderParamPage(st *paramState, io *ioState, astatus *audioStatus, level *l
 	}
 	switch st.Page() {
 	case pagePresets:
-		return renderPresetsPage(st)
+		return renderPresetsPage(st, level)
 	case pageSettings:
 		return io.render()
 	default:
@@ -267,7 +267,7 @@ func dbFrac(peak float64) float64 {
 // coincide; the marker is what the encoder controls, the fill is what's
 // actually coming out right now.
 func renderVolumeFader(img *image.NRGBA, cx int, level *levelMeter, volSlot *paramSlot) {
-	const w = 22
+	const w = 34 // widened from 22 for legibility on Push's screen
 	x := cx - w/2
 	y := knobCY - knobR
 	h := 2 * knobR
@@ -282,7 +282,7 @@ func renderVolumeFader(img *image.NRGBA, cx int, level *levelMeter, volSlot *par
 		// same dB scale as the live fill above — a marker at 0.5 and a
 		// fill peaking at 0.5 land on the same line.
 		markY := y + h - int(float64(h)*dbFrac(volSlot.value))
-		gfx.FillRect(img, x-2, markY-1, w+4, 2, xtTeal)
+		gfx.FillRect(img, x-2, markY-2, w+4, 4, xtTeal)
 	}
 }
 
@@ -290,10 +290,11 @@ func renderVolumeFader(img *image.NRGBA, cx int, level *levelMeter, volSlot *par
 // (not full-screen — encoder 1 moves a staged highlight, distinct from
 // the actually-loaded preset until Load/bottom-1 commits it), and octave
 // transpose as a pan-style knob in column 2, applied immediately.
-func renderPresetsPage(st *paramState) *image.NRGBA {
+func renderPresetsPage(st *paramState, level *levelMeter) *image.NRGBA {
 	st.mu.Lock()
 	presetSlot := st.slots["preset"]
 	octSlot := st.slots["octave_transpose"]
+	volSlot := st.slots["channel_volume"]
 	st.mu.Unlock()
 
 	img := image.NewNRGBA(image.Rect(0, 0, screenW, screenH))
@@ -346,6 +347,11 @@ func renderPresetsPage(st *paramState) *image.NRGBA {
 			ValueScale: 2,
 		})
 	}
+
+	// Master-out level stays visible here too — PRESETS is the one
+	// knob-grid page that doesn't go through renderKnobGrid, which is
+	// where every other page picks this up (see renderVolumeFader's doc).
+	renderVolumeFader(img, cellW*2+knobCX, level, volSlot)
 
 	var bottom [8]widgets.SoftButton
 	bottom[0] = widgets.SoftButton{Label: "LOAD", State: widgets.SoftConfirm}

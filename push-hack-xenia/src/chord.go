@@ -50,3 +50,13 @@ func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus 
 		go toggleUI(pmURL, st, io, astatus, level)
 	}
 }
+
+// isShiftHeld reports whether Shift is currently held — used by the
+// touch-strip pitch-bend handler to switch it to driving mod_wheel
+// instead. Safe to call from the ALSA read-loop goroutine (same one that
+// updates chordHeld).
+func isShiftHeld() bool {
+	chordMu.Lock()
+	defer chordMu.Unlock()
+	return chordHeld[ccShift]
+}

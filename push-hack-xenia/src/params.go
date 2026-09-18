@@ -454,6 +454,22 @@ func (st *paramState) NudgeOctave(delta int) (val string, ok bool) {
 	return val, true
 }
 
+// NudgeMasterVolume applies one tick of Push3's dedicated hardware Volume
+// encoder (push3.CCVolume, separate from the 8 param encoders) to
+// channel_volume — not on any paramPages grid page, so it can't go
+// through applyEncoder, and works the same on every page/bank.
+func (st *paramState) NudgeMasterVolume(delta int) (val string, ok bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	slot := st.slots["channel_volume"]
+	if slot == nil {
+		return "", false
+	}
+	val = nudgeSlotLocked(slot, "channel_volume", delta)
+	st.dirty = true
+	return val, true
+}
+
 // movePresetCursor moves PRESETS page's staged highlight by delta ticks
 // (same accumulate-then-step feel as an enum param, via enumSensitivity's
 // "preset" entry) — does not touch slots["preset"].value or the plugin;

@@ -280,6 +280,11 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 				case ctlBankFlip:
 					setBank(params, ev.idx)
 
+				case ctlMasterVolume:
+					if val, ok := params.NudgeMasterVolume(ev.delta); ok {
+						cSetParam(plugin, "channel_volume", val)
+					}
+
 				case ctlBottomPress:
 					switch params.Page() {
 					case pagePresets:

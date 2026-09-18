@@ -103,6 +103,7 @@ const (
 	ctlBottomPress                // idx = button index 0-7 (bottom-screen button pressed)
 	ctlSetParam                   // key/val = absolute param write (see webserver.go) — not from Push hardware
 	ctlBankFlip                   // idx = target bank (0 or 1) — D-Pad Left/Right, see setBank in params.go
+	ctlMasterVolume                // delta = tick count — Push3's dedicated hardware Volume encoder
 )
 
 // controlEvent is a CC-derived UI action decoded on the ALSA read-loop
@@ -174,6 +175,8 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 			ev = controlEvent{kind: ctlBankFlip, idx: 0}
 		case cc == push3.CCDPadRight && val == 127:
 			ev = controlEvent{kind: ctlBankFlip, idx: 1}
+		case cc == push3.CCVolume:
+			ev = controlEvent{kind: ctlMasterVolume, delta: push3.DecodeRel(val)}
 		default:
 			return
 		}
@@ -181,6 +184,36 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 		case h.ctl <- ev:
 		default:
 			log.Printf("control channel full, dropped CC event cc=%d val=%d", cc, val)
+		}
+		return
+	}
+
+	if evType == alsaseq.EvPitchBend {
+		// Push3's touch strip reports its position as pitch bend on
+		// channel 1 (push3.NoteTouchStrip's doc) — only Push3 itself
+		// sends this on the port we watch. value is signed, -8192..8191.
+		if !fromPush3 {
+			return
+		}
+		value := int32(binary.LittleEndian.Uint32(data[8:]))
+		if isShiftHeld() {
+			// Shift+strip repurposes it as mod_wheel instead of pitch
+			// bend — same physical gesture, different destination.
+			v127 := uint8((value + 8192) * 127 / 16383)
+			select {
+			case h.ctl <- controlEvent{kind: ctlSetParam, key: "mod_wheel", val: float64(v127)}:
+			default:
+				log.Printf("control channel full, dropped shift+strip mod_wheel event")
+			}
+			return
+		}
+		channel := data[0] & 0x0F
+		bend := uint32(value + 8192)
+		msg := [3]byte{0xE0 | channel, uint8(bend & 0x7F), uint8((bend >> 7) & 0x7F)}
+		select {
+		case h.out <- msg:
+		default:
+			log.Printf("MIDI channel full, dropped pitch bend event")
 		}
 		return
 	}
@@ -211,6 +244,14 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 		if data[1] < 36 || data[1] > 99 {
 			return
 		}
+	} else if want := h.rt.getRecvChannel(); want >= 0 && int(data[0]&0x0F) != want {
+		// Non-Push3 sources (external gear, Live MIDI clips) only trigger
+		// a voice on the configured receive channel, if one is set —
+		// otherwise every track routed to "Xenia MIDI In" sounds at once.
+		// Push3's own pads are never filtered this way: the firmware
+		// assigns each held pad its own MPE channel, so a fixed channel
+		// filter would silence most of the pad grid.
+		return
 	}
 
 	channel := data[0] & 0x0F

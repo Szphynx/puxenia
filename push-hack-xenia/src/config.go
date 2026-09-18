@@ -33,6 +33,14 @@ type persistedConfig struct {
 	// PushManagerURL overrides the default http://localhost:7701 — for
 	// development only; never set by the on-screen picker.
 	PushManagerURL string `json:"push_manager_url,omitempty"`
+	// RecvChannel restricts which MIDI channel's Note On/Off from
+	// non-Push3 sources (external gear, Live MIDI clips) actually
+	// triggers a voice — e.g. several tracks routed to "Xenia MIDI In"
+	// no longer all sound at once. -1 (default) is omni: every channel
+	// triggers, matching this hack's original behavior. Push3's own pad
+	// grid is never filtered by this — see main.go's Fixed(), pads use
+	// per-note MPE channels the firmware assigns itself.
+	RecvChannel int `json:"recv_channel"`
 }
 
 func defaultConfig() persistedConfig {
@@ -41,6 +49,7 @@ func defaultConfig() persistedConfig {
 		MidiPort:      alsaseq.Push3PortDefault,
 		PCMDevice:     "hw:PHVAudio,1,0",
 		ChannelOffset: 0,
+		RecvChannel:   -1,
 	}
 }
 

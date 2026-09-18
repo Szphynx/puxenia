@@ -15,6 +15,7 @@ type sharedConfig struct {
 	pcmDevice      string
 	channelOffset  int
 	pushManagerURL string
+	recvChannel    int
 }
 
 func newSharedConfig(cfg persistedConfig) *sharedConfig {
@@ -24,6 +25,7 @@ func newSharedConfig(cfg persistedConfig) *sharedConfig {
 		pcmDevice:      cfg.PCMDevice,
 		channelOffset:  cfg.ChannelOffset,
 		pushManagerURL: cfg.PushManagerURL,
+		recvChannel:    cfg.RecvChannel,
 	}
 }
 
@@ -63,6 +65,21 @@ func (s *sharedConfig) setChannelOffset(offset int) {
 	s.channelOffset = offset
 }
 
+// getRecvChannel returns the MIDI channel (0-15) that non-Push3 Note
+// On/Off must arrive on to trigger a voice, or -1 for omni (every
+// channel). See persistedConfig.RecvChannel.
+func (s *sharedConfig) getRecvChannel() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recvChannel
+}
+
+func (s *sharedConfig) setRecvChannel(ch int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recvChannel = ch
+}
+
 // snapshot returns the current values as a persistedConfig, ready to save.
 func (s *sharedConfig) snapshot() persistedConfig {
 	s.mu.Lock()
@@ -73,5 +90,6 @@ func (s *sharedConfig) snapshot() persistedConfig {
 		PCMDevice:      s.pcmDevice,
 		ChannelOffset:  s.channelOffset,
 		PushManagerURL: s.pushManagerURL,
+		RecvChannel:    s.recvChannel,
 	}
 }
