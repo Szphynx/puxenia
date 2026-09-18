@@ -297,37 +297,40 @@ namespace
 	}
 
 	// sendSingleParamChange sends a Sound/Single Parameter Change SysEx
-	// (IDM 0x20h) -- format F0 3E 0E DEV 20h LOC IH IL XX F7. This, not a
-	// plain Control Change, is how most sound-editing parameters (filter
-	// cutoff/resonance/etc.) are actually meant to be set in real time:
-	// the device's own MIDI Implementation Chart lists only 7 CCs as
-	// directly recognized (1/2/5/7/10/32/64 -- Modwheel/Breath/Portamento
-	// Time/Volume/Pan/Bank Select/Sustain), with a footnote pointing
-	// elsewhere for everything else. That "everything else" turned out to
-	// be this SysEx mechanism, addressed by the SDATA byte-offset table
-	// (gearmulator's xtLib confirms the exact wire format: xtMidiTypes.h's
-	// SysexCommand::SingleParameterChange = 0x20, xtState.cpp's
-	// getSingleParameter/modifySingle). LOC (the byte after the command)
-	// is the "location" byte -- irrelevant here since XT single mode's
-	// SingleEditBufferSingleMode always targets the live edit buffer
-	// regardless of its value (xtState.cpp's getSingle() ignores it for
-	// that case) -- sent as 0x20 by convention, matching that enum value.
-	// paramIndex is the SDATA table's "Index" column (e.g. 62 for Filter 1
-	// Cutoff), split into two 7-bit bytes exactly like GLBP's global index
-	// would be if it needed more than 7 bits -- xtState.cpp's
-	// getParameter(): index = (data[idxH] << 7) + data[idxL].
-	void sendSingleParamChange(XeniaInstance *inst, uint16_t paramIndex, uint8_t value)
+	// (IDM 0x20h) -- format F0 3E 0E DEV 20h PART PAGE IDX XX F7. This,
+	// not a plain Control Change, is how most sound-editing parameters
+	// (filter cutoff/resonance/etc.) are actually meant to be set in real
+	// time: the device's own MIDI Implementation Chart lists only 7 CCs
+	// as directly recognized (1/2/5/7/10/32/64 -- Modwheel/Breath/
+	// Portamento Time/Volume/Pan/Bank Select/Sustain), with a footnote
+	// pointing elsewhere for everything else. That "everything else"
+	// turned out to be this SysEx mechanism, addressed by the SDATA
+	// byte-offset table.
+	//
+	// This exact field layout (PART, PAGE, IDX, XX -- four single-byte
+	// fields, not the two-byte 14-bit-split index an earlier version of
+	// this function guessed from xtState.cpp's generic getParameter()
+	// helper alone) is confirmed straight from gearmulator's own
+	// reference JUCE plugin, which is a real, working implementation:
+	// xtJucePlugin/parameterDescriptions_xt.json's "midipackets" ->
+	// "singleparameterchange" entry, cross-checked against
+	// xtController.cpp's sendParameterChange(). PART is 0 for a Single
+	// (non-Multi) parameter (Controller::sendParameterChange's default
+	// case always inserts Parameter::getPart(), which is 0 outside Multi
+	// mode). PAGE is the parameterdescriptions JSON's own "page" field,
+	// which defaults to 0 and is 0 for every filter-section entry.
+	void sendSingleParamChange(XeniaInstance *inst, uint8_t paramIndex, uint8_t value)
 	{
 		synthLib::SMidiEvent ev(synthLib::MidiEventSource::Host);
 		auto &sx = ev.sysex;
 		sx.push_back(0xF0);
 		sx.push_back(0x3E);
 		sx.push_back(0x0E);
-		sx.push_back(0x7F); // DEV: broadcast
-		sx.push_back(0x20); // IDM: Single Parameter Change
-		sx.push_back(0x20); // LOC: ignored for the live edit buffer in single mode
-		sx.push_back(static_cast<uint8_t>((paramIndex >> 7) & 0x7F));
-		sx.push_back(static_cast<uint8_t>(paramIndex & 0x7F));
+		sx.push_back(0x7F);  // DEV: broadcast
+		sx.push_back(0x20);  // IDM: Single Parameter Change
+		sx.push_back(0x00);  // PART: 0 (not in Multi mode)
+		sx.push_back(0x00);  // PAGE: 0 (every filter-section param's real page)
+		sx.push_back(paramIndex);
 		sx.push_back(value);
 		sx.push_back(0xF7);
 		inst->device->sendMidiEvent(ev);
@@ -347,7 +350,7 @@ namespace
 	// filter) for the remaining kParams entries whose CC numbers came from
 	// a misread of the same source document -- those still need their own
 	// SDATA index looked up and added here before they'll audibly work.
-	struct SysexParamDef { const char *key; uint16_t sdataIndex; };
+	struct SysexParamDef { const char *key; uint8_t sdataIndex; };
 	constexpr SysexParamDef kSysexParams[] = {
 		{"cutoff",              62},
 		{"resonance",           63},
