@@ -41,7 +41,14 @@ import (
 )
 
 const (
-	cardID                = "PHVAudio"
+	// The card's ALSA-assigned id, not the "PHVAudio" driver name shown
+	// in /proc/asound/cards -- ALSA auto-derives this id from the
+	// loopback module's longname ("Push Hack Virtual Audio") since it's
+	// insmod'd without an explicit id= override (id= would require an
+	// module reload, disrupting Live's already-open PCM handles on this
+	// card). Re-check /proc/asound/cards if push-hack-audio-loopback
+	// changes its longname or is ever insmod'd with an id= param.
+	cardID                = "Audio"
 	defaultPushManagerURL = "http://localhost:7701"
 	// defaultWebPort matches hack.json's "port" field — kept in sync
 	// manually since hackcfg.Load only uses this as a fallback for a
