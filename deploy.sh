@@ -19,7 +19,7 @@ PUSH_HOST="${PUSH_HOST:-192.168.3.89}"
 PUSH_KEY="${PUSH_KEY:-$HOME/xenia-build/pushkey}"
 ROM_DIR="${ROM_DIR:-$HOME/xenia-build/rom}"
 REPO_DIR="${REPO_DIR:-$HOME/puxenia}"
-ALOOP_KO_DIR="${ALOOP_KO_DIR:-$HOME/federico-pepe/push-hack-audio-loopback/ko}"
+ALOOP_KO_DIR="${ALOOP_KO_DIR:-$HOME/push-hack-audio-loopback/ko}"
 REMOTE_DIR="/tmp/xenia-hack"
 
 ssh_() { ssh -i "$PUSH_KEY" "root@${PUSH_HOST}" "$@"; }
