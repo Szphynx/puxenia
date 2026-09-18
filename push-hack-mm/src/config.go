@@ -49,7 +49,7 @@ func defaultConfig() persistedConfig {
 	return persistedConfig{
 		MidiClient:    alsaseq.Push3ClientDefault,
 		MidiPort:      alsaseq.Push3PortDefault,
-		PCMDevice:     "hw:PHVAudio,1,0",
+		PCMDevice:     "hw:Audio,1,0",
 		ChannelOffset: 0,
 		RecvChannel:   -1,
 		BaseChannel:   0,

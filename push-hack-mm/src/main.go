@@ -47,7 +47,7 @@ import (
 )
 
 const (
-	cardID                = "PHVAudio"
+	cardID                = "Audio"
 	defaultPushManagerURL = "http://localhost:7701"
 	defaultWebPort        = 7708
 
