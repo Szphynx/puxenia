@@ -249,48 +249,51 @@ authoritative, ground truth, data-driven, and trivial to read:
   - No checksum — `modifySingle()` writes `*p = _data[IdxSingleParamValue]`
     with no checksum check at all, unlike a full dump.
 - **Implemented**: `xenia_plugin.cpp`'s `sendSingleParamChange()` +
-  `kSysexParams` (currently only the filter section — see that file's own
-  comments for exactly which keys and why only those). **This exact fix
-  has not yet been tested on real hardware** — the hardware test already
-  done used the earlier, wrong `PART=0x20` build.
+  `kSysexParams`, now covering **all 76 of the 82 `kParams` keys** that
+  aren't Program Change or one of the 5 confirmed-hardwired CCs. **Not
+  yet tested on real hardware** — the one hardware test done so far used
+  the earlier, wrong `PART=0x20` build with only 7 keys converted.
 
-### The SDATA parameter index table (partial — get more pages if needed)
+### The SDATA parameter index table — use the JSON, not the PDF
 
-Confirmed indices, from the device manual's "3. Data Formats / 3.1 SDATA
-— Sound Data" table (**not** the MIDI Implementation Chart — a different
-page of the same manual):
+Don't re-read PDF pages for this. `gearmulator`'s reference plugin ships
+the **complete** table as data:
+`xtJucePlugin/parameterDescriptions_xt.json`'s `"parameterdescriptions"`
+array — 451 entries, every one with `page`/`index`/`name`/`min`/`max`
+(and `default` where it's not the schema default). Single-mode params
+(everything `kParams` needs) are `"page":0` (or the field is simply
+absent, which means 0 per `"parameterdescriptiondefaults"`). Pages
+10-18 are the 8 Multi-mode instrument parts — irrelevant to this
+project's single-patch editing. Look a parameter up by name, e.g.:
 
-| Index | Range | Parameter |
-|---|---|---|
-| 62 | 0-127 | Filter 1 Cutoff |
-| 63 | 0-127 | Filter 1 Resonance |
-| 64 | 0-9 | Filter 1 Type |
-| 65 | -200%..+197% | Filter 1 Keytrack |
-| 66 | -64..+63 | Filter 1 Envelope Amount |
-| 67 | 0-127 | Filter 1 Envelope Velocity Amount |
-| 73 | 0-127 | Filter 2 Cutoff |
-| 74 | 0-1 | Filter 2 Type (6dB LP / 6dB HP only — narrower than Filter 1) |
-| 75 | -200%..+197% | Filter 2 Keytrack |
-| 76 | 0-7[MW2]/0-35[XT] | Effect Type |
-| 77 | 0-127 | Amplifier Volume |
-| 79 | -64..+63 | Amplifier Envelope Velocity Amount |
-| 81 | 0-127 | Chorus |
-| 83 | 0-127 (64=center) | Panning |
-| 89 | 0-127 | Glide Time |
-| 112-117 | various | Filter Envelope Attack/Decay/Sustain/Release/(reserved)/Trigger |
-| 119-122 | various | Amplifier Envelope Attack/Decay/Sustain/(continues on next page) |
+```bash
+python3 -c "
+import re, json
+with open('source/waldi/xt/xtJucePlugin/parameterDescriptions_xt.json') as f:
+    content = re.sub(r'//.*', '', f.read())
+params = {p['name']: p for p in json.loads(content)['parameterdescriptions'] if p.get('page',0)==0}
+print(params['F1Cutoff'])
+"
+```
 
-**Only the filter-section indices (62-67, 73) are wired up in code so
-far.** The rest of `kParams`' ~75 other keys (OSC, MIXER, LFO1/2, ARP,
-WAVE MOD, etc.) almost certainly need the exact same treatment — a real
-SDATA index looked up and added to `kSysexParams`, not the CC numbers
-currently in `kParams`' `outCC` field, which are very likely *all*
-equally non-functional for the same reason the filter was. Don't
-convert them by guessing indices from the pattern above — get the actual
-remaining SDATA table pages and read the real index for each key, the
-same way the filter section was done. Guessing wrong writes into some
-*other* unintended parameter, silently, which is a worse failure mode
-than "no effect."
+(The file has `//` comments, so strip them before `json.loads` — plain
+`json.load` fails on it directly.)
+
+The table also has two things worth knowing about for future feature
+work, found while reading it for this: a **real 16-slot modulation
+matrix** (`Slot1Source`/`Slot1Amount`/`Slot1Destination` through
+`Slot16...`, indices 192-239, each Source 0-31 and Destination 0-35 —
+exactly the shape needed for an MPE-to-parameter mod-matrix feature, no
+guessing required), and the **patch name as 16 raw SysEx-writable bytes**
+(`Name00`-`Name15`, indices 240-255, range 32-127 i.e. printable ASCII) —
+readable via a Single Dump request, useful for a real preset-name
+display instead of the current "Program NNN" placeholder.
+
+`kParams`' keys were matched to this table by name (e.g. `cutoff` →
+`F1Cutoff`) and the mapping is already done — see `kSysexParams` in
+`xenia_plugin.cpp`. If a *new* param is ever added to `kParams`, look it
+up in this JSON the same way; don't guess an index by pattern-matching
+neighboring ones.
 
 ### Everything already ruled out, so it isn't re-tried
 
@@ -349,20 +352,13 @@ rebuild-and-test round here.)
 
 ### Next steps
 
-1. **Test the corrected `PART=0x00` SysEx fix on real Push hardware** —
-   not yet done as of this writing. The one hardware test run so far used
-   the earlier, wrong `PART=0x20` build, which the packet-field-layout
-   fix (see "The real answer" above) shows was a genuine no-op-causing
-   bug, not just an unconfirmed theory. This is the most promising
+1. **Test the corrected, complete SysEx conversion on real Push
+   hardware** — not yet done as of this writing. The one hardware test
+   run so far used the earlier, wrong `PART=0x20` build with only the
+   filter section converted; both the field-layout bug and the "only 7 of
+   82 params converted" gap are now fixed. This is the most promising
    untested lead by far.
-2. If still silent on real hardware: get the remaining SDATA table pages
-   (indices continue past 122) and convert the rest of `kParams` the same
-   way — it's very likely *all* of it needs this, not just the filter.
-   Cross-check every index against `parameterDescriptions_xt.json`'s
-   `"parameterdescriptions"` array (searchable by name, e.g. `"F1Cutoff"`)
-   rather than re-reading PDF pages — the JSON is both more complete and
-   easier to grep.
-3. If filter specifically still doesn't respond even via the corrected
+2. If filter specifically still doesn't respond even via the corrected
    SysEx: the per-patch "local MIDI receive" possibility from the
    original investigation is still open — check the manual for a
    per-single-patch MIDI-enable byte distinct from the global
