@@ -42,7 +42,7 @@ echo "==> Copying binary + plugin + config"
 scp_ "$REPO_DIR/xenia-plugin/build/libxenia-plugin.so" "root@${PUSH_HOST}:$REMOTE_DIR/"
 scp_ "$REPO_DIR/push-hack-xenia/src/push-xenia" "root@${PUSH_HOST}:$REMOTE_DIR/"
 scp_ "$REPO_DIR/push-hack-xenia/hack.json" "root@${PUSH_HOST}:$REMOTE_DIR/"
-scp_ -r "$REPO_DIR/push-hack-xenia/src/ui/." "root@${PUSH_HOST}:$REMOTE_DIR/ui/"
+scp_ -r "$REPO_DIR/push-hack-xenia/src/ui"/* "root@${PUSH_HOST}:$REMOTE_DIR/ui/"
 
 echo "==> Copying ROM (wiped by every reboot along with the rest of /tmp)"
 if [[ -d "$ROM_DIR" ]] && compgen -G "$ROM_DIR/*.BIN" > /dev/null || compgen -G "$ROM_DIR/*.bin" > /dev/null 2>&1; then
