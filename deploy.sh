@@ -50,9 +50,19 @@ scp_ "$REPO_DIR/push-hack-xenia/hack.json" "root@${PUSH_HOST}:$REMOTE_DIR/"
 scp_ -r "$REPO_DIR/push-hack-xenia/src/ui"/* "root@${PUSH_HOST}:$REMOTE_DIR/ui/"
 
 echo "==> Copying ROM (wiped by every reboot along with the rest of /tmp)"
+# xenia_create_instance chdir()s to <module_dir>/roms before loading -- NOT
+# module_dir itself. Copying flat into module/ (as this used to do) means
+# that chdir fails, xenia_create_instance sets bootFailed, and
+# xenia_render_block silently memsets its output to zero forever -- with
+# bridge_plugin_load never checking for that failure, the Go host prints
+# "plugin loaded and instance created" and runs completely normally,
+# producing perfect digital silence. This was the real cause of every
+# "notes come in but no audio" session, independent of anything about
+# MIDI/device/channel routing.
+ssh_ "mkdir -p '$REMOTE_DIR/module/roms'"
 if [[ -d "$ROM_DIR" ]] && compgen -G "$ROM_DIR/*.BIN" > /dev/null || compgen -G "$ROM_DIR/*.bin" > /dev/null 2>&1; then
-    scp_ "$ROM_DIR"/*.BIN "root@${PUSH_HOST}:$REMOTE_DIR/module/" 2>/dev/null || \
-    scp_ "$ROM_DIR"/*.bin "root@${PUSH_HOST}:$REMOTE_DIR/module/"
+    scp_ "$ROM_DIR"/*.BIN "root@${PUSH_HOST}:$REMOTE_DIR/module/roms/" 2>/dev/null || \
+    scp_ "$ROM_DIR"/*.bin "root@${PUSH_HOST}:$REMOTE_DIR/module/roms/"
 else
     echo "   WARNING: no .bin/.BIN files found in $ROM_DIR -- set ROM_DIR if this is wrong."
 fi

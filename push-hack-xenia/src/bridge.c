@@ -100,6 +100,24 @@ bridge_plugin_t *bridge_plugin_load(const char *so_path, const char *module_dir,
         return NULL;
     }
 
+    /* create_instance can "succeed" (return non-NULL) while marking itself
+     * failed internally -- e.g. Xenia's ROM-not-found case, which used to
+     * silently memset every rendered block to zero forever instead of
+     * refusing to load. Check get_error right away so a bad module_dir/ROM
+     * fails loudly here instead of producing a plugin that "loads fine"
+     * and just never makes sound. */
+    if (api->get_error) {
+        char errbuf[256];
+        int n = api->get_error(instance, errbuf, sizeof(errbuf));
+        if (n > 0) {
+            errbuf[n < (int)sizeof(errbuf) ? n : (int)sizeof(errbuf) - 1] = '\0';
+            set_error("create_instance reported a fatal error: %s", errbuf);
+            api->destroy_instance(instance);
+            dlclose(lib);
+            return NULL;
+        }
+    }
+
     bridge_plugin_t *p = (bridge_plugin_t *)malloc(sizeof(bridge_plugin_t));
     p->dl_handle = lib;
     p->api = api;
