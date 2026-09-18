@@ -1,0 +1,1 @@
+/usr/bin/c++  -fconstexpr-loop-limit=10000000 -O3 -DNDEBUG CMakeFiles/semaphoreTest.dir/semaphore_test.cpp.o -o semaphoreTest  libdsp56kBase.a -lrt 

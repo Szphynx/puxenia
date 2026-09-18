@@ -1,0 +1,2 @@
+/usr/bin/ar qc libhardwareLib.a CMakeFiles/hardwareLib.dir/am29f.cpp.o CMakeFiles/hardwareLib.dir/i2c.cpp.o CMakeFiles/hardwareLib.dir/i2cFlash.cpp.o CMakeFiles/hardwareLib.dir/lcd.cpp.o CMakeFiles/hardwareLib.dir/lcdfonts.cpp.o CMakeFiles/hardwareLib.dir/sciMidi.cpp.o
+/usr/bin/ranlib libhardwareLib.a

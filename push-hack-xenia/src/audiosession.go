@@ -189,6 +189,13 @@ func startAudioSession(plugin *C.bridge_plugin_t, device string, hp hwparams.Par
 	log.Printf("audio session opened: device=%s channels=%d rate=%d period=%d (requested period=%d buffer=%d)",
 		device, s.channels, hp.Rate, s.period, hp.Period, hp.Buffer)
 
+	// The plugin is created once at startup with a placeholder rate
+	// (main.go's pluginInitRate) since the real one is only known once
+	// Live has opened its side. Correct its resampler now that the true
+	// negotiated rate is in hand -- otherwise audio plays back
+	// pitched/timestretched by the ratio between the two, permanently.
+	cSetParam(plugin, "_host_sample_rate", strconv.Itoa(int(hp.Rate)))
+
 	go s.run(plugin, midiCh, ctlCh, params, io, rt, hp.Rate, level, diag)
 	return s, nil
 }

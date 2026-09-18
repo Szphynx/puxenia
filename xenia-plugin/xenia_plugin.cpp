@@ -98,6 +98,16 @@ namespace
 		{
 			handle = resample_open(1 /* high quality */, factor, factor);
 		}
+		// Re-opens against a corrected factor and drops whatever was
+		// pending under the old (wrong) one -- used when the real host
+		// sample rate becomes known after load time (see
+		// "_host_sample_rate" in xenia_set_param).
+		void reopen(double factor)
+		{
+			if(handle) resample_close(handle);
+			handle = resample_open(1, factor, factor);
+			pending.clear();
+		}
 		~PerChannelResampler()
 		{
 			if(handle) resample_close(handle);
@@ -627,6 +637,29 @@ namespace
 		auto *inst = static_cast<XeniaInstance *>(instance);
 		if(inst->bootFailed || !key || !val)
 			return;
+
+		// Reserved key (leading underscore, never a real param) -- the Go
+		// host calls this once it knows the audio session's actual
+		// negotiated sample rate, which is only ever known after Live
+		// opens its side and isn't available yet at plugin-load time (see
+		// main.go's pluginInitRate). Without this, resampleFactor stays
+		// permanently wrong whenever the negotiated rate isn't exactly
+		// pluginInitRate -- audio still plays, just pitched/timestretched
+		// by the ratio between the two, and tickNoteWatchdog's elapsed-time
+		// math (which also reads g_hostSampleRate) runs equally wrong,
+		// delaying its stuck-note release far past kMaxNoteHoldSeconds.
+		if(strcmp(key, "_host_sample_rate") == 0)
+		{
+			const int rate = atoi(val);
+			if(rate > 0)
+			{
+				g_hostSampleRate = static_cast<uint32_t>(rate);
+				inst->resampleFactor = static_cast<double>(rate) / kNativeRate;
+				inst->resampL.reopen(inst->resampleFactor);
+				inst->resampR.reopen(inst->resampleFactor);
+			}
+			return;
+		}
 
 		const ParamDef *def = findParam(key);
 		if(!def)

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libwLib.a CMakeFiles/wLib.dir/wDevice.cpp.o CMakeFiles/wLib.dir/wDsp.cpp.o CMakeFiles/wLib.dir/wHardware.cpp.o CMakeFiles/wLib.dir/wSysexRemoteControl.cpp.o CMakeFiles/wLib.dir/wPlugin.cpp.o CMakeFiles/wLib.dir/wRom.cpp.o CMakeFiles/wLib.dir/wState.cpp.o
+/usr/bin/ranlib libwLib.a

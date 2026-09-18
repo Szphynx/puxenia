@@ -1,0 +1,2 @@
+/usr/bin/ar qc libvtuneSdk.a CMakeFiles/vtuneSdk.dir/src/ittnotify/ittnotify_static.c.o CMakeFiles/vtuneSdk.dir/src/ittnotify/jitprofiling.c.o
+/usr/bin/ranlib libvtuneSdk.a
