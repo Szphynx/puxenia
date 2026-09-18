@@ -192,6 +192,7 @@
     <div class="io-row"><label>MIDI IN</label><select class="io" id="io-midi"></select></div>
     <div class="io-row"><label>Audio Out</label><select class="io" id="io-pcm"></select></div>
     <div class="io-row"><label>Channel</label><select class="io" id="io-channel"></select></div>
+    <div class="io-row"><label>MIDI Channel</label><select class="io" id="io-recv-channel"></select></div>
   </section>
 </main>
 <script>
@@ -379,8 +380,9 @@ function applyIO(io) {
   buildIOSelect("io-midi", io.midi || []);
   buildIOSelect("io-pcm", io.device || []);
   buildIOSelect("io-channel", io.channel || []);
+  buildIOSelect("io-recv-channel", io.recvChannel || []);
   if (!ioWired) {
-    for (const [id, kind] of [["io-midi", "midi"], ["io-pcm", "pcm"], ["io-channel", "channel"]]) {
+    for (const [id, kind] of [["io-midi", "midi"], ["io-pcm", "pcm"], ["io-channel", "channel"], ["io-recv-channel", "recv-channel"]]) {
       const el = document.getElementById(id);
       el.addEventListener("focus", () => touching.add(id));
       el.addEventListener("blur", () => {
