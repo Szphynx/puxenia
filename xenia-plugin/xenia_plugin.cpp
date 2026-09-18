@@ -671,6 +671,8 @@ namespace
 			{
 				g_hostSampleRate = static_cast<uint32_t>(rate);
 				inst->resampleFactor = static_cast<double>(rate) / kNativeRate;
+				fprintf(stdout, "[xenia_plugin] _host_sample_rate=%d -> resampleFactor=%f (kNativeRate=%f)\n",
+					rate, inst->resampleFactor, kNativeRate);
 				inst->resampL.reopen(inst->resampleFactor);
 				inst->resampR.reopen(inst->resampleFactor);
 			}
