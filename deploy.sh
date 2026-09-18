@@ -19,6 +19,7 @@ PUSH_HOST="${PUSH_HOST:-192.168.3.89}"
 PUSH_KEY="${PUSH_KEY:-$HOME/xenia-build/pushkey}"
 ROM_DIR="${ROM_DIR:-$HOME/xenia-build/rom}"
 REPO_DIR="${REPO_DIR:-$HOME/puxenia}"
+ALOOP_KO_DIR="${ALOOP_KO_DIR:-$HOME/federico-pepe/push-hack-audio-loopback/ko}"
 REMOTE_DIR="/tmp/xenia-hack"
 
 ssh_() { ssh -i "$PUSH_KEY" "root@${PUSH_HOST}" "$@"; }
@@ -54,7 +55,23 @@ fi
 
 echo "==> Fixing up things a Push reboot resets"
 ssh_ "[ -e /lib64 ] || ln -s /lib /lib64"
-ssh_ "lsmod | grep -q snd_aloop || modprobe snd-aloop"
+
+if ! ssh_ "lsmod | grep -q snd_aloop"; then
+    KVER="$(ssh_ "uname -r")"
+    KO_LOCAL="$ALOOP_KO_DIR/$KVER/snd-aloop.ko"
+    if [[ -f "$KO_LOCAL" ]]; then
+        echo "   Loading bundled snd-aloop.ko for kernel $KVER (push-hack-audio-loopback"
+        echo "   was never installed persistently via the catalog, so this is redone"
+        echo "   on every reboot -- see push-hack-audio-loopback/README.md to install"
+        echo "   it properly instead)."
+        scp_ "$KO_LOCAL" "root@${PUSH_HOST}:$REMOTE_DIR/snd-aloop.ko"
+        ssh_ "insmod $REMOTE_DIR/snd-aloop.ko"
+    else
+        echo "   WARNING: no bundled snd-aloop.ko for kernel $KVER in $ALOOP_KO_DIR --"
+        echo "   audio loopback will not work. See push-hack-audio-loopback/README.md"
+        echo "   to build one for this kernel."
+    fi
+fi
 
 echo "==> Launching push-xenia (Ctrl+C to stop)"
 ssh -t -i "$PUSH_KEY" "root@${PUSH_HOST}" "cd $REMOTE_DIR && chmod +x push-xenia && ./push-xenia"
