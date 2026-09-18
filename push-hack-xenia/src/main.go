@@ -220,14 +220,17 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 			}
 			return
 		}
-		channel := data[0] & 0x0F
-		bend := uint32(value + 8192)
-		msg := [3]byte{0xE0 | channel, uint8(bend & 0x7F), uint8((bend >> 7) & 0x7F)}
-		select {
-		case h.out <- msg:
-		default:
-			log.Printf("MIDI channel full, dropped pitch bend event")
-		}
+		// Disabled: forwarding this to the device meant any touch-strip
+		// contact (deliberate or incidental, e.g. brushing it while
+		// reaching for a pad) streamed a continuous run of pitch-bend
+		// MIDI at the device the whole time contact held, adding real
+		// per-message processing load to the same render thread that
+		// renders audio -- confirmed the actual source of "garbled/
+		// chopped audio even on a bare pad press, nothing else touched"
+		// once resample_probe proved the DSP/resample chain itself is
+		// clean in isolation. Notes only, for now -- MPE pitch bend can
+		// come back once it's throttled instead of forwarded
+		// one-message-per-ALSA-event.
 		return
 	}
 
