@@ -78,6 +78,18 @@ cd push-hack-mm && ./deploy.sh 192.168.3.89 ~/xenia-build/pushkey
 Use `./deploy.sh` directly (skip the `git pull`) if you only changed
 local, uncommitted code and just want to rebuild + redeploy.
 
+## Stopping puMMa (e.g. to try a different hack)
+
+```
+cd ~/puxenia/push-hack-mm
+./stop.sh 192.168.3.89 ~/xenia-build/pushkey
+```
+
+Kills puMMa cleanly and resets push-manager's display/MIDI-filter state
+directly (not just relying on puMMa's own shutdown handler), so
+Shift+Device and the audio device are immediately free for another hack
+— use this instead of manually hunting down the process.
+
 ## Manual build only (no deploy)
 
 ```
