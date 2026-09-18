@@ -15,6 +15,10 @@
 #   NO_BUILD=1                         (skip the build step, just redeploy)
 set -euo pipefail
 
+# go.mod needs a real 1.25+ toolchain; apt's golang-go (1.18) doesn't cut
+# it and this script shouldn't depend on ~/.bashrc having been sourced.
+[[ -x /usr/local/go/bin/go ]] && PATH="/usr/local/go/bin:$PATH"
+
 PUSH_HOST="${PUSH_HOST:-192.168.3.89}"
 PUSH_KEY="${PUSH_KEY:-$HOME/xenia-build/pushkey}"
 ROM_DIR="${ROM_DIR:-$HOME/xenia-build/rom}"
