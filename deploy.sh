@@ -44,7 +44,7 @@ echo "==> Ensuring remote directories exist"
 ssh_ "mkdir -p '$REMOTE_DIR/module' '$REMOTE_DIR/ui'"
 
 echo "==> Copying binary + plugin + config"
-scp_ "$REPO_DIR/xenia-plugin/build/libxenia-plugin.so" "root@${PUSH_HOST}:$REMOTE_DIR/"
+scp_ "$REPO_DIR/xenia-plugin/build/libxenia-plugin.so" "root@${PUSH_HOST}:$REMOTE_DIR/dsp.so"
 scp_ "$REPO_DIR/push-hack-xenia/src/push-xenia" "root@${PUSH_HOST}:$REMOTE_DIR/"
 scp_ "$REPO_DIR/push-hack-xenia/hack.json" "root@${PUSH_HOST}:$REMOTE_DIR/"
 scp_ -r "$REPO_DIR/push-hack-xenia/src/ui"/* "root@${PUSH_HOST}:$REMOTE_DIR/ui/"
