@@ -1,2 +1,0 @@
-/usr/bin/ar qc libdsp56kBase.a CMakeFiles/dsp56kBase.dir/conditionvariable.cpp.o CMakeFiles/dsp56kBase.dir/dspassert.cpp.o CMakeFiles/dsp56kBase.dir/logging.cpp.o CMakeFiles/dsp56kBase.dir/mmuhelper.cpp.o CMakeFiles/dsp56kBase.dir/mutex.cpp.o CMakeFiles/dsp56kBase.dir/threadtools.cpp.o CMakeFiles/dsp56kBase.dir/trigger.cpp.o CMakeFiles/dsp56kBase.dir/win8sync.cpp.o
-/usr/bin/ranlib libdsp56kBase.a

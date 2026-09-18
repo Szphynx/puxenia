@@ -1,2 +1,0 @@
-/usr/bin/ar qc libbaseLib.a CMakeFiles/baseLib.dir/binarystream.cpp.o CMakeFiles/baseLib.dir/commandline.cpp.o CMakeFiles/baseLib.dir/configFile.cpp.o CMakeFiles/baseLib.dir/event.cpp.o CMakeFiles/baseLib.dir/filesystem.cpp.o CMakeFiles/baseLib.dir/logging.cpp.o CMakeFiles/baseLib.dir/md5.cpp.o CMakeFiles/baseLib.dir/os.cpp.o CMakeFiles/baseLib.dir/propertyMap.cpp.o
-/usr/bin/ranlib libbaseLib.a

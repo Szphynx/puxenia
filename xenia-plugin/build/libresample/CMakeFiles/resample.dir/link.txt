@@ -1,2 +1,0 @@
-/usr/bin/ar qc libresample.a CMakeFiles/resample.dir/src/filterkit.c.o CMakeFiles/resample.dir/src/resample.c.o CMakeFiles/resample.dir/src/resamplesubs.c.o
-/usr/bin/ranlib libresample.a

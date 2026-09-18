@@ -1,1 +1,0 @@
-/usr/bin/c++  -fconstexpr-loop-limit=10000000 -O3 -DNDEBUG CMakeFiles/sharedAudioReducerTest.dir/sharedaudioreducer_test.cpp.o -o sharedAudioReducerTest  libdsp56kBase.a -lrt 

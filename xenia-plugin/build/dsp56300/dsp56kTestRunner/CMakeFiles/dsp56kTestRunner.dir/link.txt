@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/dsp56kTestRunner.dir/testRunner.cpp.o -o dsp56kTestRunner  ../dsp56kEmu/libdsp56kEmu.a ../vtuneSdk/libvtuneSdk.a -ldl ../dsp56kBase/libdsp56kBase.a ../asmjit/libasmjit.a -lpthread -lrt 
