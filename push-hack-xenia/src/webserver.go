@@ -58,9 +58,10 @@ func (ws *webServer) buildState() map[string]any {
 		// state.params directly as that map, not state.params.params.
 		"params": snap.Params,
 		"io": map[string]any{
-			"midi":    ws.io.MIDIOptions(),
-			"device":  ws.io.DeviceOptions(),
-			"channel": ws.io.ChannelOptions(),
+			"midi":        ws.io.MIDIOptions(),
+			"device":      ws.io.DeviceOptions(),
+			"channel":     ws.io.ChannelOptions(),
+			"recvChannel": ws.io.RecvChannelOptions(),
 		},
 		"audio": map[string]any{"ready": ready, "message": msg},
 		// cpuPercent/activeVoices: updated every ~2s by audiosession.go's
@@ -141,9 +142,10 @@ func (ws *webServer) handleSetParam(w http.ResponseWriter, r *http.Request) {
 // separately since the option lists themselves don't need SSE-rate polling.
 func (ws *webServer) handleIO(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, map[string]any{
-		"midi":    ws.io.MIDIOptions(),
-		"device":  ws.io.DeviceOptions(),
-		"channel": ws.io.ChannelOptions(),
+		"midi":        ws.io.MIDIOptions(),
+		"device":      ws.io.DeviceOptions(),
+		"channel":     ws.io.ChannelOptions(),
+		"recvChannel": ws.io.RecvChannelOptions(),
 	})
 }
 
@@ -187,6 +189,7 @@ func runWebServer(port int, params *paramState, io *ioState, astatus *audioStatu
 	mux.HandleFunc("POST /api/io/midi", ws.handleSetIO(ws.io.SetMIDIByIndex))
 	mux.HandleFunc("POST /api/io/pcm", ws.handleSetIO(ws.io.SetDeviceByIndex))
 	mux.HandleFunc("POST /api/io/channel", ws.handleSetIO(ws.io.SetChannelByIndex))
+	mux.HandleFunc("POST /api/io/recv-channel", ws.handleSetIO(ws.io.SetRecvChannelByIndex))
 	mux.HandleFunc("/", httpx.ServeEmbedded(webUI, "ui/index.html"))
 
 	handler := httpx.WithLogging(httpx.WithCORS("GET, POST, OPTIONS", mux))

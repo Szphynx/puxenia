@@ -639,10 +639,10 @@ type paramSnapshot struct {
 
 // stateSnapshot is the web UI's GET /api/state and SSE payload shape.
 type stateSnapshot struct {
-	Page         int                       `json:"page"`
-	PageName     string                    `json:"pageName"`
-	PresetCursor int                       `json:"presetCursor"`
-	Params       map[string]paramSnapshot  `json:"params"`
+	Page         int                      `json:"page"`
+	PageName     string                   `json:"pageName"`
+	PresetCursor int                      `json:"presetCursor"`
+	Params       map[string]paramSnapshot `json:"params"`
 }
 
 // Snapshot returns every param's current value/meta plus the active page

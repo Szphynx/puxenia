@@ -98,11 +98,11 @@ type midiHandler struct {
 type ctlKind int
 
 const (
-	ctlEncoder     ctlKind = iota // idx 0-7, delta = tick count
-	ctlPageJump                   // idx = page index (top-screen button 1-4 pressed)
-	ctlBottomPress                // idx = button index 0-7 (bottom-screen button pressed)
-	ctlSetParam                   // key/val = absolute param write (see webserver.go) — not from Push hardware
-	ctlBankFlip                   // idx = target bank (0 or 1) — D-Pad Left/Right, see setBank in params.go
+	ctlEncoder      ctlKind = iota // idx 0-7, delta = tick count
+	ctlPageJump                    // idx = page index (top-screen button 1-4 pressed)
+	ctlBottomPress                 // idx = button index 0-7 (bottom-screen button pressed)
+	ctlSetParam                    // key/val = absolute param write (see webserver.go) — not from Push hardware
+	ctlBankFlip                    // idx = target bank (0 or 1) — D-Pad Left/Right, see setBank in params.go
 	ctlMasterVolume                // delta = tick count — Push3's dedicated hardware Volume encoder
 )
 

@@ -35,7 +35,7 @@ type ioState struct {
 	hackDir string
 	rt      *sharedConfig
 
-	midiCursor, deviceCursor, channelCursor int
+	midiCursor, deviceCursor, channelCursor, recvChCursor int
 }
 
 func newIOState(hackDir string, rt *sharedConfig) *ioState {
@@ -91,6 +91,24 @@ func (io *ioState) buildChannelRowsLocked() []channelOption {
 	return out
 }
 
+// recvChannelOption is one selectable row in the MIDI CHANNEL column —
+// -1 (OMNI, the default) plus the 16 real MIDI channels. Restricts which
+// channel's Note On/Off from non-Push3 sources (external gear, Live MIDI
+// clips) triggers a voice — see main.go's Fixed() and
+// sharedConfig.getRecvChannel.
+type recvChannelOption struct {
+	label   string
+	channel int
+}
+
+func (io *ioState) buildRecvChannelRowsLocked() []recvChannelOption {
+	out := []recvChannelOption{{label: "OMNI", channel: -1}}
+	for ch := 0; ch < 16; ch++ {
+		out = append(out, recvChannelOption{label: fmt.Sprintf("Ch %d", ch+1), channel: ch})
+	}
+	return out
+}
+
 // clampCursor keeps c in [0,n-1] (or 0 if n==0).
 func clampCursor(c, n int) int {
 	if n == 0 {
@@ -128,6 +146,13 @@ func (io *ioState) moveChannelCursor(delta int) {
 	defer io.mu.Unlock()
 	n := len(io.buildChannelRowsLocked())
 	io.channelCursor = clampCursor(io.channelCursor+sign(delta), n)
+}
+
+func (io *ioState) moveRecvChannelCursor(delta int) {
+	io.mu.Lock()
+	defer io.mu.Unlock()
+	n := len(io.buildRecvChannelRowsLocked())
+	io.recvChCursor = clampCursor(io.recvChCursor+sign(delta), n)
 }
 
 func sign(v int) int {
@@ -175,6 +200,17 @@ func (io *ioState) commitChannel() {
 		return
 	}
 	io.rt.setChannelOffset(rows[io.channelCursor].offset)
+	io.saveLocked()
+}
+
+func (io *ioState) commitRecvChannel() {
+	io.mu.Lock()
+	defer io.mu.Unlock()
+	rows := io.buildRecvChannelRowsLocked()
+	if io.recvChCursor < 0 || io.recvChCursor >= len(rows) {
+		return
+	}
+	io.rt.setRecvChannel(rows[io.recvChCursor].channel)
 	io.saveLocked()
 }
 
@@ -233,6 +269,18 @@ func (io *ioState) ChannelOptions() []ioOption {
 	return out
 }
 
+func (io *ioState) RecvChannelOptions() []ioOption {
+	io.mu.Lock()
+	defer io.mu.Unlock()
+	curCh := io.rt.getRecvChannel()
+	rows := io.buildRecvChannelRowsLocked()
+	out := make([]ioOption, len(rows))
+	for i, r := range rows {
+		out[i] = ioOption{Label: r.label, Current: r.channel == curCh}
+	}
+	return out
+}
+
 // SetMIDIByIndex/SetDeviceByIndex/SetChannelByIndex commit column choice i
 // directly (the web UI's equivalent of moving the on-screen cursor to i
 // and pressing the column's commit button) — writes to sharedConfig and
@@ -273,6 +321,19 @@ func (io *ioState) SetChannelByIndex(i int) error {
 	io.channelCursor = i
 	io.mu.Unlock()
 	io.commitChannel()
+	return nil
+}
+
+func (io *ioState) SetRecvChannelByIndex(i int) error {
+	io.mu.Lock()
+	rows := io.buildRecvChannelRowsLocked()
+	if i < 0 || i >= len(rows) {
+		io.mu.Unlock()
+		return fmt.Errorf("recv channel option index %d out of range (have %d)", i, len(rows))
+	}
+	io.recvChCursor = i
+	io.mu.Unlock()
+	io.commitRecvChannel()
 	return nil
 }
 
@@ -325,6 +386,18 @@ func (io *ioState) render() *image.NRGBA {
 		channelLabels[i] = mark + r.label
 	}
 	drawSettingsColumn(img, 2*settingsColW, "AUDIO CHANNEL", channelLabels, io.channelCursor)
+
+	curRecvCh := io.rt.getRecvChannel()
+	recvChRows := io.buildRecvChannelRowsLocked()
+	recvChLabels := make([]string, len(recvChRows))
+	for i, r := range recvChRows {
+		mark := "  "
+		if r.channel == curRecvCh {
+			mark = "> "
+		}
+		recvChLabels[i] = mark + r.label
+	}
+	drawSettingsColumn(img, 3*settingsColW, "MIDI CHANNEL", recvChLabels, io.recvChCursor)
 
 	return img
 }

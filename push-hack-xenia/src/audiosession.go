@@ -309,6 +309,9 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 						case 4:
 							io.commitChannel()
 							params.MarkDirty()
+						case 6:
+							io.commitRecvChannel()
+							params.MarkDirty()
 						}
 					}
 
@@ -331,6 +334,8 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 							io.moveDeviceCursor(ev.delta)
 						case 4:
 							io.moveChannelCursor(ev.delta)
+						case 6:
+							io.moveRecvChannelCursor(ev.delta)
 						}
 						params.MarkDirty()
 					default:

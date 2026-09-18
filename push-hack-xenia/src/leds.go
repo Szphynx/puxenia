@@ -90,7 +90,7 @@ var litCCs = []byte{
 // params.go's page constants. Everything else on the bottom row goes dark.
 var pageBottomLit = map[int][]int{
 	pagePresets:  {1},
-	pageSettings: {1, 3, 5},
+	pageSettings: {1, 3, 5, 7},
 }
 
 // syncUILEDs blanks the whole control surface then lights only what's
