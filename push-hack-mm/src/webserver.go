@@ -57,7 +57,7 @@ func (ws *webServer) buildState() map[string]any {
 		"seq":   seqSnap,
 		"panel": panel,
 		"audio": map[string]any{"ready": ready, "message": msg},
-		"diag":  map[string]any{"cpuPercent": ws.diag.getCPU(), "activeVoices": ws.diag.getVoices()},
+		"diag":  map[string]any{"cpuPercent": ws.diag.getCPU(), "activeVoices": ws.diag.getVoices(), "deviceReady": ws.diag.getReady()},
 	}
 }
 

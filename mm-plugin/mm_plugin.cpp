@@ -279,6 +279,19 @@ namespace
 		int currentTrack = 0;
 		int baseChannel = 0; // 0-indexed: track N's notes/CCs use channel baseChannel+N
 
+		// Real (and this JIT-emulated) Monomachine firmware ignores MIDI/panel
+		// input for several seconds after power-on while its own boot sequence
+		// runs -- confirmed via gearmulator-md-mm's own
+		// mdLibTest/mmBootFirmwareTest.cpp and mmAudioFirmwareTest.cpp, which
+		// both require advance(hardware, g_samplerate * 20) before treating the
+		// device as ready for MIDI. A note/CC/panel event sent before that
+		// point is silently dropped by the still-booting emulated UART, not
+		// queued -- reproduced directly against the real ROM (dlopen smoke
+		// test: identical note+CC sent at t=0 produced total silence across
+		// 28s of rendered audio; the same call sent after a 22s warm-up
+		// produced normal output). See kBootFrames/isBooting below.
+		uint64_t framesSinceCreate = 0;
+
 		md::PanelRowState panelRows;
 
 		// One value per kParams entry, per track — this bridge's own
@@ -302,6 +315,18 @@ namespace
 			delete device;
 		}
 	};
+
+	// kBootSeconds: 2s margin over the 20s gearmulator-md-mm's own firmware
+	// tests require before treating a fresh device as ready for MIDI/panel
+	// input (mmBootFirmwareTest.cpp/mmAudioFirmwareTest.cpp's own
+	// advance(hardware, g_samplerate * 20)). g_hostSampleRate is fixed by the
+	// time any instance exists (set once in move_plugin_init_v2).
+	constexpr uint32_t kBootSeconds = 22;
+
+	bool isBooting(const MmInstance *inst)
+	{
+		return inst->framesSinceCreate < static_cast<uint64_t>(kBootSeconds) * g_hostSampleRate;
+	}
 
 	void queueMidi(MmInstance *inst, uint8_t status, uint8_t d1, uint8_t d2)
 	{
@@ -550,7 +575,7 @@ namespace
 	void mm_on_midi(void *instance, const uint8_t *msg, int len, int /*source*/)
 	{
 		auto *inst = static_cast<MmInstance *>(instance);
-		if(inst->bootFailed || len < 1)
+		if(inst->bootFailed || len < 1 || isBooting(inst))
 			return;
 
 		const uint8_t status = msg[0];
@@ -603,15 +628,21 @@ namespace
 
 		try
 		{
+			if(strcmp(key, "base_channel") == 0)
+			{
+				// Shadow-only bridge config, never touches the device --
+				// exempt from isBooting() below so a startup-time call (see
+				// main.go's setBaseChannelOnPlugin, fired once at launch,
+				// well inside the boot window) still lands.
+				int v = atoi(val);
+				inst->baseChannel = v < 0 ? 0 : (v > 15 ? 15 : v);
+				return;
+			}
+			if(isBooting(inst))
+				return; // see MmInstance::framesSinceCreate's doc comment
 			if(strcmp(key, "track") == 0)
 			{
 				selectTrack(inst, atoi(val));
-				return;
-			}
-			if(strcmp(key, "base_channel") == 0)
-			{
-				int v = atoi(val);
-				inst->baseChannel = v < 0 ? 0 : (v > 15 ? 15 : v);
 				return;
 			}
 			if(strcmp(key, "toggle_step") == 0)
@@ -699,6 +730,13 @@ namespace
 
 		if(strcmp(key, "engine_name") == 0) return writeStr(buf, buf_len, "Monomachine (Elektron SFX-60/6)");
 		if(strcmp(key, "engine") == 0) return writeStr(buf, buf_len, "0");
+		// "ready": "0" while the emulated firmware is still in its power-on
+		// boot sequence -- see MmInstance::framesSinceCreate's doc comment.
+		// MIDI/panel input is silently no-op'd by this bridge until this
+		// flips to "1"; the Go host should poll it and hold off (or show a
+		// "booting" status) rather than let pad presses appear to do
+		// nothing with no explanation.
+		if(strcmp(key, "ready") == 0) return writeStr(buf, buf_len, isBooting(inst) ? "0" : "1");
 		if(strcmp(key, "track") == 0) return writeStr(buf, buf_len, std::to_string(inst->currentTrack));
 		if(strcmp(key, "active_voices") == 0) return writeStr(buf, buf_len, std::to_string(inst->activeNotes.size()));
 
@@ -821,6 +859,7 @@ namespace
 			if(frames > 0) memset(out_interleaved_lr, 0, static_cast<size_t>(frames) * 2 * sizeof(int16_t));
 			return;
 		}
+		inst->framesSinceCreate += static_cast<uint64_t>(frames);
 
 		try
 		{

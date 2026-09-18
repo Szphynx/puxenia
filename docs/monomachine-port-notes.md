@@ -195,14 +195,45 @@ back a non-selected track's trig LEDs either.
    CC actually mutes the track the way the SEQ page's mute row implies on
    real hardware — plausible from the automation table's own naming, not
    independently confirmed.
-5. **ROM discovery** (`synthLib::RomLoader::addSearchPath` +
-   `md::RomLoader::findROM(MachineModel::Monomachine)`) expects an 8MiB
-   `.bin` in `module/roms/` matching OS 1.32b's fingerprint
-   (`mdtypes.h`'s `g_mmOs132bFingerprint`). Verified in this session that
-   both "no file present" and "an 8MiB file present but wrong
-   fingerprint" are rejected cleanly (see the verified-build list above)
-   — genuinely unverified is only the success path, an actual real ROM
-   being found and booted.
+5. ~~ROM discovery success path unverified~~ — **resolved**: tested against
+   a real Elektron SFX6-60 OS 1.32b ROM (user-supplied, legally owned).
+   `md::RomLoader::isRomForModel` computes an FNV-1a 64-bit fingerprint
+   over the full 8MiB image; the supplied ROM's fingerprint
+   (`0xe1c1b461b6d0f21b`) matches `mdtypes.h`'s `g_mmOs132bFingerprint`
+   exactly. `md::Device` constructs, `isValid()` is true, and the real
+   DSP56300-JIT-emulated firmware boots (observed ESSI codec
+   init/configuration in its own boot sequence, confirming actual
+   firmware execution, not a stub).
+6. **Boot-readiness gate, found and fixed this session.** Cross-checked
+   against `gearmulator-md-mm`'s own `mdLibTest/mmBootFirmwareTest.cpp`
+   and `mmAudioFirmwareTest.cpp`: both require
+   `advance(hardware, g_samplerate * 20)` — 20 real seconds of
+   emulated device-time — before treating a freshly-created device as
+   ready for MIDI/panel input at all; `mmAudioFirmwareTest.cpp` further
+   asserts `idleRms < 1e-7` immediately after that wait (silence is the
+   *expected* boot-complete state until a note is actually sent).
+   `mm_plugin.cpp` had no such gate: `mm_create_instance` returned a
+   live, seemingly-ready instance immediately after ROM load, and
+   `mm_on_midi`/`mm_set_param` forwarded every event straight to the
+   device with no boot check. Reproduced directly with a standalone
+   `dlopen` harness against the real ROM: an identical note-on + CC
+   sequence sent at t=0 produced total silence across 28s of rendered
+   audio, while the same sequence sent after a 22s warm-up produced
+   normal audible output — i.e. every pad press or knob turn in the
+   first ~20s after this hack starts (or restarts) was being silently
+   dropped by the still-booting emulated firmware, the exact failure
+   class flagged for `push-hack-xenia` in commit `5036fca` ("CC-based
+   params don't audibly change the sound"), except total rather than
+   partial. Fixed: `MmInstance` now tracks `framesSinceCreate`;
+   `mm_on_midi` and every device-facing branch of `mm_set_param` (not
+   the purely-internal `base_channel` config, which never touches the
+   device) no-op while `framesSinceCreate < 22s` of host sample-rate.
+   A new `get_param("ready")` key ("0"/"1") lets the Go host show
+   "Booting…" instead of eating early input with no explanation —
+   wired through `diagStats.deviceReady` (polled every 2s alongside
+   `active_voices`, same audio-session goroutine, same threading rule
+   as every other `bridge_plugin_*` call) into `/api/state`'s
+   `diag.deviceReady` and the web UI's status badge.
 
 ## Deploying
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Monomachine</title>
+<title>puMMa</title>
 <style>
   /*
    * Palette matches the Push screen's own Elektron-inspired theme
@@ -148,7 +148,7 @@
 </head>
 <body>
 <header>
-  <h1>Monomachine</h1>
+  <h1>puMMa</h1>
   <span id="status">connecting…</span>
   <span id="diag" title="CPU% of one core, active voice count">—</span>
   <div id="track-picker"></div>
@@ -523,8 +523,13 @@ function applyIO(io) {
   }
 }
 
-function applyAudioStatus(audio) {
+function applyAudioStatus(audio, deviceReady) {
   const el = document.getElementById("status");
+  if (audio.ready && deviceReady === false) {
+    el.className = "notready";
+    el.textContent = "Booting…";
+    return;
+  }
   el.className = audio.ready ? "ready" : "notready";
   el.textContent = audio.ready ? "Running" : (audio.message || "Not ready").split("\n")[0];
 }
@@ -550,7 +555,7 @@ function applyState(state) {
   applySeq(state.seq || {}, state.track || 0);
   if (state.panel && state.panel.lcd) drawLCD(state.panel.lcd);
   applyIO(state.io || {});
-  applyAudioStatus(state.audio || {});
+  applyAudioStatus(state.audio || {}, (state.diag || {}).deviceReady);
   applyDiag(state.diag || {});
   document.getElementById("version").textContent = state.version ? `v${state.version}` : "";
 }

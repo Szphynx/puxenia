@@ -316,7 +316,7 @@ func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, s
 		if err := client.PushImage(renderParamPage(st, io, astatus, seq)); err != nil {
 			log.Printf("display: push frame: %v", err)
 		}
-		log.Printf("push-mm: UI ON (Shift+Device) — MIDI intercept enabled")
+		log.Printf("puMMa: UI ON (Shift+Device) — MIDI intercept enabled")
 	} else {
 		if err := client.SetMode(0); err != nil {
 			log.Printf("display: disable takeover: %v", err)
@@ -325,7 +325,7 @@ func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, s
 			log.Printf("display: disable midi filter: %v", err)
 		}
 		releaseUILEDs(pmURL)
-		log.Printf("push-mm: UI OFF (Shift+Device) — MIDI intercept disabled")
+		log.Printf("puMMa: UI OFF (Shift+Device) — MIDI intercept disabled")
 	}
 }
 

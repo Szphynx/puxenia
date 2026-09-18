@@ -49,12 +49,21 @@ func (m *levelMeter) get() float64  { return math.Float64frombits(m.bits.Load())
 type diagStats struct {
 	cpuBits atomic.Uint64
 	voices  atomic.Int32
+	// deviceReady mirrors mm_plugin.cpp's get_param("ready"): false while
+	// the emulated Monomachine firmware is still in its ~22s power-on boot
+	// sequence, during which the plugin silently no-ops every MIDI/panel
+	// event it receives (see mm_plugin.cpp's MmInstance::framesSinceCreate
+	// doc comment). Zero value is false, which is correct: nothing has
+	// polled the plugin yet at construction, and it genuinely isn't ready.
+	deviceReady atomic.Bool
 }
 
-func (d *diagStats) setCPU(pct float64) { d.cpuBits.Store(math.Float64bits(pct)) }
-func (d *diagStats) getCPU() float64    { return math.Float64frombits(d.cpuBits.Load()) }
-func (d *diagStats) setVoices(n int)    { d.voices.Store(int32(n)) }
-func (d *diagStats) getVoices() int     { return int(d.voices.Load()) }
+func (d *diagStats) setCPU(pct float64)  { d.cpuBits.Store(math.Float64bits(pct)) }
+func (d *diagStats) getCPU() float64     { return math.Float64frombits(d.cpuBits.Load()) }
+func (d *diagStats) setVoices(n int)     { d.voices.Store(int32(n)) }
+func (d *diagStats) getVoices() int      { return int(d.voices.Load()) }
+func (d *diagStats) setReady(ready bool) { d.deviceReady.Store(ready) }
+func (d *diagStats) getReady() bool      { return d.deviceReady.Load() }
 
 func selfCPUTicks() (uint64, error) {
 	data, err := os.ReadFile("/proc/self/stat")
@@ -419,6 +428,13 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 				}
 			}
 			C.free(unsafe.Pointer(key))
+
+			readyBuf := make([]byte, 4)
+			readyKey := C.CString("ready")
+			if n := C.bridge_plugin_get_param(plugin, readyKey, (*C.char)(unsafe.Pointer(&readyBuf[0])), C.int(len(readyBuf))); n > 0 {
+				diag.setReady(readyBuf[0] == '1')
+			}
+			C.free(unsafe.Pointer(readyKey))
 
 			log.Printf("progress: blocks=%d slow=%d maxPre=%v maxWrite=%v cpu=%.1f%% voices=%d",
 				blocks, slowBlocks, maxPre, maxWrite, cpuPct, diag.getVoices())
