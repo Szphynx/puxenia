@@ -126,11 +126,22 @@ type deviceOption struct {
 	device alsapcm.PlaybackDevice
 }
 
+// buildDeviceRowsLocked lists only the loopback card's playback devices —
+// EnumPlaybackDevices returns every playback device on the system,
+// including Push3's own physical hardware output (card "A3"). That card
+// is Live's own audio interface; picking it here means fighting Live for
+// the same device (repeated "Device or resource busy", the session
+// flapping open/closed every few seconds, and no sound) instead of
+// writing to the loopback card Live is meant to read this hack's output
+// from. Same posture as buildMIDIRowsLocked's Push3-only filter above.
 func (io *ioState) buildDeviceRowsLocked() []deviceOption {
 	devices, _ := alsapcm.EnumPlaybackDevices()
-	out := make([]deviceOption, len(devices))
-	for i, d := range devices {
-		out[i] = deviceOption{label: fmt.Sprintf("%s (%s)", d.Name, d.HWDevice()), device: d}
+	var out []deviceOption
+	for _, d := range devices {
+		if d.CardID != cardID {
+			continue
+		}
+		out = append(out, deviceOption{label: fmt.Sprintf("%s (%s)", d.Name, d.HWDevice()), device: d})
 	}
 	return out
 }
