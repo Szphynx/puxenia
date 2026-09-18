@@ -182,23 +182,26 @@ func stepLedColor(seq *seqState, params *paramState, track, step int) byte {
 	return padStepOffOther
 }
 
-// syncPadLEDs draws the SEQ page's full pad grid: rows 0-5 (bottom-up) =
-// tracks 1-6's current 8-step page (seq.StepPage() selects steps 1-8 vs
-// 9-16), row 6 dark/reserved, row 7 = per-track mute toggles (columns
-// 0-5). Called every display tick while SEQ is the active page (see
-// display.go's runDisplayLoop) — cheap enough for that cadence (48-54
-// Note On writes at ~10fps).
+// syncPadLEDs draws the SEQ page's full pad grid: row 7 (top) = per-track
+// mute toggles (columns 0-5), rows 1-6 (bottom-up, directly under the mute
+// row with no gap) = tracks 1-6's current 8-step page (seq.StepPage()
+// selects steps 1-8 vs 9-16), row 0 (bottom edge) dark/reserved — pushed
+// to the very bottom rather than sandwiched between mutes and the track
+// rows, since a dead row at the edge reads as "unused margin" while one
+// in the middle of the functional rows just looks broken (reported after
+// real hardware testing). Called every display tick while SEQ is the
+// active page (see display.go's runDisplayLoop) — cheap enough for that
+// cadence (48-54 Note On writes at ~10fps).
 func syncPadLEDs(seq *seqState, params *paramState) {
 	offset := seq.StepPage() * mmStepsPerPage
-	for row := 0; row < mmNumTracks; row++ {
+	for track := 0; track < mmNumTracks; track++ {
+		row := track + 1
 		for col := 0; col < mmStepsPerPage; col++ {
-			setPadLED(col, row, stepLedColor(seq, params, row, col+offset))
+			setPadLED(col, row, stepLedColor(seq, params, track, col+offset))
 		}
 	}
-	for row := mmNumTracks; row < 7; row++ {
-		for col := 0; col < 8; col++ {
-			setPadLED(col, row, ledOff)
-		}
+	for col := 0; col < 8; col++ {
+		setPadLED(col, 0, ledOff)
 	}
 	for col := 0; col < 8; col++ {
 		if col < mmNumTracks {

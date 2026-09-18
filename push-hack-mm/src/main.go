@@ -198,10 +198,11 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 		}
 		col, row := push3.PadCoord(data[1])
 		switch {
-		case row <= 5: // rows 0-5 (bottom-up): tracks 1-6's step grid
+		case row >= 1 && row <= mmNumTracks: // rows 1-6 (bottom-up): tracks 1-6's step grid, see leds.go's syncPadLEDs doc for why row 0 is the spare row, not a gap in the middle
+			track := row - 1
 			step := col + h.seq.StepPage()*mmStepsPerPage
 			select {
-			case h.ctl <- controlEvent{kind: ctlToggleStep, idx: row, delta: step}:
+			case h.ctl <- controlEvent{kind: ctlToggleStep, idx: track, delta: step}:
 			default:
 				log.Printf("control channel full, dropped step toggle")
 			}

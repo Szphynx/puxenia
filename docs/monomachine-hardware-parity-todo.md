@@ -60,6 +60,34 @@ re-guess them, go straight to hardware/manual when available.
 
 ## Needs verification, not yet confirmed either way
 
+- [ ] **`toggle_mute`'s CC likely doesn't do real per-track muting.**
+  Verified against the real ROM: `toggle_mute` (Mute CC, page 8 index 0,
+  matches `mdautomation.cpp`'s own table) does reach the device — it's
+  not silently dropped — but muting a track while it had a live-triggered
+  note sounding only reduced output by ~8%, nowhere near real silence.
+  Reported as "mutes don't work at all" after real hardware testing.
+  Two live possibilities, not yet disambiguated: (a) the CC mapping/effect
+  itself is wrong, or (b) real Monomachine Mute may only affect a track's
+  *sequenced* playback, not live/manually-triggered notes (common Elektron
+  semantics) — in which case this port's behavior would be correct and
+  the test (which used a live-triggered note, not Play) simply wasn't
+  testing the right thing. Needs testing on real hardware specifically
+  *while Play is running* before touching the code.
+- [ ] **No playhead / step-position indicator exists anywhere in this
+  port**, on-screen or on the pads — reported as a "grey bar that should
+  move right during playback" after real hardware testing, but there is
+  no such element in `display.go` or `leds.go` at all. What's actually
+  being seen: the SEQ page's pad-grid LED sync (`leds.go`'s
+  `stepLedColor`) draws the *currently selected track's* row using a
+  live device readback (`padStepOff`, dim gray, for an unprogrammed
+  step) while every other track's row uses this host's own static
+  shadow — and `toggleStep` auto-selects whichever track's row you tap
+  a step on, so that dim-gray row visually jumps between rows as you
+  interact with different tracks. Easy to mistake for a moving
+  indicator; it isn't one. A real playhead needs actual step-position
+  telemetry from the device, which this bridge doesn't have a confirmed
+  source for yet (see the existing "no confirmed is-playing/is-recording
+  LED" item above) — real feature, not a quick fix.
 - [ ] **TRIG LED color meanings beyond green/yellow.** Yellow =
   trigless/NOTE-OFF marker, green = normal note trig — matches
   `FrontPanel::LedColor`'s enum already. What **red** means on a step
