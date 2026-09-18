@@ -60,7 +60,15 @@ fi
 echo "==> Fixing up things a Push reboot resets"
 ssh_ "[ -e /lib64 ] || ln -s /lib /lib64"
 
-if ! ssh_ "lsmod | grep -q snd_aloop"; then
+# push-xenia looks for a card named exactly "PHVAudio" (set by the
+# insmod id= param below), not just "any snd_aloop loaded" -- a bare
+# insmod (or a stray load from before this script set id=) creates a
+# card named "Loopback" instead, which push-xenia never finds.
+if ! ssh_ "grep -q PHVAudio /proc/asound/cards 2>/dev/null"; then
+    if ssh_ "lsmod | grep -q snd_aloop"; then
+        echo "   Removing snd_aloop loaded under the wrong card name"
+        ssh_ "rmmod snd_aloop"
+    fi
     KVER="$(ssh_ "uname -r")"
     KO_LOCAL="$ALOOP_KO_DIR/$KVER/snd-aloop.ko"
     if [[ -f "$KO_LOCAL" ]]; then
@@ -69,10 +77,6 @@ if ! ssh_ "lsmod | grep -q snd_aloop"; then
         echo "   on every reboot -- see push-hack-audio-loopback/README.md to install"
         echo "   it properly instead)."
         scp_ "$KO_LOCAL" "root@${PUSH_HOST}:$REMOTE_DIR/snd-aloop.ko"
-        # id=PHVAudio names the card "PHVAudio" (push-xenia's cardPresent()
-        # check looks for exactly that name, per push-hack-audio-loopback's
-        # own src/main.go); a bare insmod creates a card named "Loopback"
-        # instead and push-xenia never finds it.
         ssh_ "insmod $REMOTE_DIR/snd-aloop.ko id=PHVAudio timer_source=A3.0.0"
     else
         echo "   WARNING: no bundled snd-aloop.ko for kernel $KVER in $ALOOP_KO_DIR --"
