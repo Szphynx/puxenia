@@ -206,6 +206,23 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 		for {
 			select {
 			case ev := <-ctlCh:
+				if !diag.getReady() {
+					// Device is still in its ~22s boot window (see
+					// mm_plugin.cpp's MmInstance::framesSinceCreate doc):
+					// mm_set_param/on_midi silently no-op there. Every case
+					// below also mutates this host's OWN shadow state
+					// (params/seq) unconditionally, with no confirmation the
+					// plugin actually applied it -- if that mutation went
+					// through while the device call was dropped, the two
+					// permanently diverge for the rest of the session (e.g.
+					// a track switch "succeeds" on screen but the device's
+					// real currentTrack never moves, so every later encoder
+					// tweak silently lands on the wrong track). Drop the
+					// whole event here instead, matching the plugin's own
+					// "ignore everything during boot" behavior exactly, so
+					// the two sides can never disagree.
+					continue
+				}
 				switch ev.kind {
 				case ctlPageJump:
 					params.setPage(ev.idx)
