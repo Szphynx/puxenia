@@ -310,6 +310,14 @@ namespace
 
 		std::vector<ActiveNote> activeNotes;
 
+		// pendingPanelReleases: see tapControl's doc comment -- a panel
+		// button's release is deferred to a later render_block call
+		// instead of happening synchronously right after the press, so
+		// the emulated firmware's key-scan gets genuine elapsed
+		// device-time to observe the press before it's released.
+		struct PendingRelease { md::PanelControl control; uint64_t releaseAtFrame; };
+		std::vector<PendingRelease> pendingPanelReleases;
+
 		~MmInstance()
 		{
 			delete device;
@@ -327,6 +335,13 @@ namespace
 	{
 		return inst->framesSinceCreate < static_cast<uint64_t>(kBootSeconds) * g_hostSampleRate;
 	}
+
+	// kPanelHoldFrames: matches gearmulator-md-mm's own mdLibTest tap()
+	// helper, which always advances 2048 samples of real device-time
+	// between a panel press and its release -- see tapControl's doc
+	// comment for why this bridge needs the same gap, deferred across
+	// render_block calls rather than done synchronously.
+	constexpr uint32_t kPanelHoldFrames = 2048;
 
 	void queueMidi(MmInstance *inst, uint8_t status, uint8_t d1, uint8_t d2)
 	{
@@ -395,16 +410,53 @@ namespace
 		return inst->device->sendPanelEvent(merged.row, merged.mask);
 	}
 
-	// tapControl presses then immediately releases — the panel-simulation
+	// tapControl presses now, releases kPanelHoldFrames of real
+	// device-time later (drained by drainPendingPanelReleases, called at
+	// the top of every mm_render_block) — the panel-simulation
 	// equivalent of a quick physical button tap (Play/Stop/track-select/
 	// trig-key toggle). Buttons meant to be *held* (e.g. Record while
 	// turning a knob for a parameter lock) instead need separate
 	// panel_button "...,down"/"...,up" calls from the Go host — see
 	// set_param's "panel_button" handling below.
+	//
+	// Releasing synchronously (press+release with zero elapsed
+	// device-time, in the same call) is what this file used to do, and
+	// it does NOT reliably work: a real-ROM dlopen test showed a
+	// synchronous toggleStep's step LED never actually flip, even though
+	// the LCD reacted (so the panel UART received something, just not a
+	// registered keypress) -- see git history / docs/
+	// monomachine-hardware-parity-todo.md. gearmulator-md-mm's own
+	// mdLibTest tap() helper always advances real device time (2048
+	// samples) between a press and its release; this defers the release
+	// the same way, just spread across render_block calls instead of a
+	// blocking sleep, since mm_render_block is the only place this
+	// bridge may legitimately advance device time (see
+	// MmInstance::pendingPanelReleases' doc comment).
 	void tapControl(MmInstance *inst, md::PanelControl control)
 	{
 		pressControl(inst, control);
-		releaseControl(inst, control);
+		inst->pendingPanelReleases.push_back({control, inst->framesSinceCreate + kPanelHoldFrames});
+	}
+
+	// drainPendingPanelReleases releases any panel control whose held
+	// time has elapsed — called at the top of every mm_render_block,
+	// before that block's own framesSinceCreate advance, so a control
+	// tapped this same call doesn't get released prematurely.
+	void drainPendingPanelReleases(MmInstance *inst)
+	{
+		auto &pending = inst->pendingPanelReleases;
+		for(auto it = pending.begin(); it != pending.end(); )
+		{
+			if(it->releaseAtFrame <= inst->framesSinceCreate)
+			{
+				releaseControl(inst, it->control);
+				it = pending.erase(it);
+			}
+			else
+			{
+				++it;
+			}
+		}
 	}
 
 	// selectTrack switches inst->currentTrack and, unless already current,
@@ -430,20 +482,10 @@ namespace
 	// LED) -- confirmed via docs/monomachine-hardware-parity-todo.md's
 	// research citing Elektron's own quick-start guide ("You enter Grid
 	// mode by hitting the Record button, whereupon its red LED will
-	// light"). Necessary, but PROVEN NOT SUFFICIENT by itself: a real-ROM
-	// dlopen test (this fix's own commit) shows panel_state's per-step
-	// LED still reads unchanged after this exact sequence, even though
-	// the LCD content DOES change (so the panel UART is receiving
-	// *something*) -- press+tapControl+release here all happen as one
-	// synchronous C++ call with ZERO elapsed device-time between them,
-	// whereas gearmulator-md-mm's own mdLibTest tap() helper always
-	// advances real device time (2048 samples) between a panel press and
-	// its release. This bridge has no render-time budget available
-	// inside a set_param call to do the same safely (mm_render_block
-	// owns the only audio-producing advance, and stealing samples here
-	// would desync the host's real-time audio scheduling) -- grid step
-	// programming remains open, needs real design work, not a one-line
-	// fix. See docs/monomachine-hardware-parity-todo.md.
+	// light"). Record is pressed immediately and released a little later
+	// than the trigger key's own deferred release (see tapControl's doc
+	// comment) so it stays held across the trigger's entire press+release
+	// window, matching how a human would actually perform this gesture.
 	void toggleStep(MmInstance *inst, int track, int step)
 	{
 		if(step < 0 || step >= kNumSteps)
@@ -451,7 +493,8 @@ namespace
 		selectTrack(inst, track);
 		pressControl(inst, md::PanelControl::Record);
 		tapControl(inst, triggerControl(step));
-		releaseControl(inst, md::PanelControl::Record);
+		inst->pendingPanelReleases.push_back(
+			{md::PanelControl::Record, inst->framesSinceCreate + kPanelHoldFrames + 256});
 	}
 
 	// applyTrackParam sets one of kParams for an explicit track (not
@@ -878,6 +921,7 @@ namespace
 			if(frames > 0) memset(out_interleaved_lr, 0, static_cast<size_t>(frames) * 2 * sizeof(int16_t));
 			return;
 		}
+		drainPendingPanelReleases(inst);
 		inst->framesSinceCreate += static_cast<uint64_t>(frames);
 
 		try

@@ -12,33 +12,39 @@ re-guess them, go straight to hardware/manual when available.
 ## Confirmed real, not yet matched in code
 
 - [x] **Grid Recording is a real, separate mode gated by Record — gate
-  added, PROVEN NOT SUFFICIENT ALONE.** Per the Elektron quick-start
-  guide: "You enter Grid mode by hitting the Record button, whereupon
-  its red LED will light." `toggleStep()` now holds `PanelControl::Record`
-  for the duration of the trig tap (the fix this item originally
-  predicted). But a real-ROM dlopen test (see `monomachine-port-notes.md`)
-  shows `panel_state`'s per-step LED still reads unchanged after this
-  exact call, even though the LCD content does change — so the panel
-  UART is receiving *something*, but not registering a trig toggle.
-  Root cause: `pressControl`/`tapControl`/`releaseControl` all happen as
-  one synchronous C++ call with **zero elapsed device-time** between
-  press and release, whereas `mdLibTest`'s own `tap()` helper always
-  advances real device time (2048 samples) between them. This bridge has
-  no render-time budget available inside a `set_param` call to do the
-  same without stealing samples from the host's real-time audio
-  scheduling (risks the exact kind of glitch reported after real
-  hardware testing — see the audio-choppiness item below). **Still
-  open**: needs a real design for giving panel taps genuine elapsed
-  device-time without disrupting `mm_render_block`'s own real-time
-  contract — not a one-line fix.
-- [ ] **Practical effect of the above, confirmed on real hardware**: SEQ
-  page pad presses currently do NOT write real steps into the pattern at
-  all. The on-screen/web grid (this host's own `seqState` shadow) lights
-  up as if edited, but the device's actual pattern is untouched — so
-  playback (Play button) plays back whatever pattern the ROM's factory-
-  default project already had, regardless of what the grid shows. This
-  is very likely why "notes play with no visible steps on the grid" was
-  reported.
+  added AND now verified reaching the device.** Per the Elektron
+  quick-start guide: "You enter Grid mode by hitting the Record button,
+  whereupon its red LED will light." `toggleStep()` holds
+  `PanelControl::Record` for the duration of the trig tap. First attempt
+  (press+tap+release as one synchronous call, zero elapsed device-time)
+  was proven NOT sufficient by a real-ROM dlopen test: `panel_state`'s
+  per-step LED read unchanged even though the LCD content changed.
+  **Fixed properly**: panel-button releases are now deferred
+  (`MmInstance::pendingPanelReleases`, drained at the top of every
+  `mm_render_block`) so the emulated firmware gets `kPanelHoldFrames`
+  (2048 samples, matching `mdLibTest`'s own `tap()` helper exactly) of
+  real elapsed device-time between a press and its release, without
+  stealing samples from the host's own real-time audio output. Re-ran
+  the same real-ROM test: `toggle_step` now DOES flip the target step's
+  panel-readback LED (0 → 2/red). SEQ page pad presses now reach the
+  real device, not just this bridge's own shadow.
+- [ ] **Two new open questions from that same verification pass, real
+  behavior not yet fully understood:**
+  1. Tapping the SAME step twice in a row did not toggle it back off —
+     it read the same non-zero value both times. `LedColor` has 4
+     values (0=off/1=green/2=red/3=yellow); this suggests a trig key in
+     grid mode may cycle through note/trigless states rather than being
+     a true binary on/off, which would make `toggleStep`'s name (and
+     the Go host's `seqState.ToggleStep`, a plain bool flip) a wrong
+     model of the real behavior. Needs live-hardware-informed testing
+     (tap the same pad repeatedly on real Push and see what actually
+     happens) before touching the Go-side toggle logic — don't guess at
+     a fix without that.
+  2. Toggling step 3 also changed step 0's reported LED color, with no
+     action taken on step 0. Not yet root-caused — could be a genuine
+     `triggerControl`/`panelPacket` indexing issue, or a real hardware
+     behavior (e.g. a downbeat/reference marker) misread as a bug.
+     Flag, don't fix blind.
 - [ ] **`FUNCTION` + `LEFT`/`RIGHT` in grid mode rotates the current
   track's trigs and locks by one step.** Not exposed anywhere in
   `push-hack-mm` today. Real feature, not required for parity, but easy
