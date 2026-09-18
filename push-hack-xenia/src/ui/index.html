@@ -176,6 +176,14 @@
     padding: 6px 8px;
   }
   select.io:focus { outline: 2px solid var(--cobalt); }
+  #version {
+    position: fixed;
+    right: 6px;
+    bottom: 4px;
+    font-size: 10px;
+    color: #555;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -195,6 +203,7 @@
     <div class="io-row"><label>MIDI Channel</label><select class="io" id="io-recv-channel"></select></div>
   </section>
 </main>
+<span id="version"></span>
 <script>
 "use strict";
 
@@ -423,6 +432,7 @@ function applyState(state) {
   applyIO(state.io || {});
   applyAudioStatus(state.audio || {});
   applyDiag(state.diag || {});
+  document.getElementById("version").textContent = state.version ? `v${state.version}` : "";
 }
 
 async function init() {

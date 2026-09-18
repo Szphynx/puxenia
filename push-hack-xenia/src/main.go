@@ -406,16 +406,10 @@ func runSupervised() {
 	if err != nil {
 		log.Fatalf("fetchChainParams: %v", err)
 	}
-	// "preset" isn't part of chain_params (the plugin only exposes it via
-	// its own ui_hierarchy browser convention) — build its metadata
-	// separately from the .braids files on disk (see fetchPresetMeta) and
-	// fold it in so it slots into paramPages like any other param.
-	presetMeta, err := fetchPresetMeta(moduleDir)
-	if err != nil {
-		log.Printf("fetchPresetMeta: %v (preset picker disabled)", err)
-	} else {
-		metas = append(metas, presetMeta)
-	}
+	// "preset" isn't part of chain_params -- it's this host's own staged
+	// browse-list UI over the real "program" key (see fetchPresetMeta),
+	// folded in here so it slots into paramPages like any other param.
+	metas = append(metas, fetchPresetMeta())
 	params := newParamState(metas)
 	// v2_create_instance auto-loads preset 0 (if any presets exist) after
 	// the defaultParams loop above — resync so the very first frame shows
@@ -461,7 +455,7 @@ func runSupervised() {
 		log.Printf("loading %s for web UI port: %v (defaulting to %d)", *configPath, err, defaultWebPort)
 		hcfg.Port = defaultWebPort
 	}
-	go runWebServer(hcfg.Port, params, io, astatus, diag, ctlCh, shutdown)
+	go runWebServer(hcfg.Port, hcfg.Version, params, io, astatus, diag, ctlCh, shutdown)
 
 	// One port, see midisession.go doc: pinned Push3 control surface +
 	// notes, picker-retargetable notes, and always open for external gear.

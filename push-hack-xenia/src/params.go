@@ -20,10 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"unsafe"
 )
@@ -259,49 +256,19 @@ func (st *paramState) syncFromPluginState(plugin *C.bridge_plugin_t) {
 	st.dirty = true
 }
 
-// braidsPresetFile is the subset of a .braids preset JSON file this host
-// reads — just enough to label the preset picker (see fetchPresetMeta).
-type braidsPresetFile struct {
-	Name string `json:"name"`
-}
-
 // fetchPresetMeta builds a synthetic enum paramMeta for "preset" — the
-// plugin never lists it in chain_params (it's exposed only through its own
-// ui_hierarchy browser convention, which this host doesn't use). Reading
-// the .braids files directly off disk also avoids the alternative of
-// cycling the live instance through every preset to read back its name:
-// that would call v2_apply_preset for each one, overwriting the
-// defaultParams values already sent to the instance by the time this runs.
-func fetchPresetMeta(moduleDir string) (paramMeta, error) {
-	dir := filepath.Join(moduleDir, "presets")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return paramMeta{}, fmt.Errorf("reading presets dir: %w", err)
-	}
-	var files []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".braids") {
-			files = append(files, e.Name())
-		}
-	}
-	sort.Strings(files) // load_presets (braids_plugin.cpp) loads in this same sorted order
-	names := make([]string, 0, len(files))
-	for _, fn := range files {
-		data, err := os.ReadFile(filepath.Join(dir, fn))
-		if err != nil {
-			return paramMeta{}, fmt.Errorf("reading %s: %w", fn, err)
-		}
-		var pf braidsPresetFile
-		if err := json.Unmarshal(data, &pf); err != nil {
-			return paramMeta{}, fmt.Errorf("parsing %s: %w", fn, err)
-		}
-		if pf.Name == "" {
-			pf.Name = strings.TrimSuffix(fn, ".braids")
-		}
-		names = append(names, pf.Name)
-	}
-	if len(names) == 0 {
-		return paramMeta{}, fmt.Errorf("no .braids presets found in %s", dir)
+// PRESETS page's staged browse-list UI over Xenia's 128 Program Change
+// slots (see the Load-button dispatch in audiosession.go's drainCtl,
+// which writes the chosen index to the real "program" key — Xenia has no
+// on-disk preset files or bulk "apply preset" call the way Braids did;
+// its ROM patches live inside the device itself, reachable only by
+// Program Change, with no name readback over MIDI). Numbered rather than
+// named for that reason — real factory patch names aren't available to
+// this host at all.
+func fetchPresetMeta() paramMeta {
+	names := make([]string, 128)
+	for i := range names {
+		names[i] = fmt.Sprintf("Program %03d", i)
 	}
 	return paramMeta{
 		Key:     "preset",
@@ -310,7 +277,7 @@ func fetchPresetMeta(moduleDir string) (paramMeta, error) {
 		Min:     0,
 		Max:     float64(len(names) - 1),
 		Options: names,
-	}, nil
+	}
 }
 
 // newParamState builds the page/slot state from the plugin's own metadata

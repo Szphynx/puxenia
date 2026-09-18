@@ -290,12 +290,14 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 					case pagePresets:
 						if ev.idx == 0 { // bottom-1 = Load
 							if idx, ok := params.loadStagedPreset(); ok {
-								cSetParam(plugin, "preset", fmt.Sprintf("%d", idx))
-								// v2_apply_preset just overwrote every param
-								// on the plugin side in one call — resync so
-								// every knob's on-screen value matches, not
-								// just "preset" itself.
-								params.syncFromPluginState(plugin)
+								// "preset" is this host's own staged
+								// browse-list key (see params.go's
+								// fetchPresetMeta) -- Xenia has no
+								// separate preset-apply call, so Load
+								// actually just sends the real Program
+								// Change via "program" instead.
+								val := fmt.Sprintf("%d", idx)
+								scheduleProgramCommit(val)
 							}
 						}
 					case pageSettings:
@@ -352,14 +354,21 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 					// Absolute write from the web UI (see webserver.go) —
 					// same goroutine, same cSetParam call as every other
 					// case here, just not keyed off Push hardware. "preset"
-					// needs the same syncFromPluginState resync as the Load
-					// button's path above, since v2_apply_preset also
-					// overwrites every other param on the plugin side.
+					// is this host's own staged browse-list key (see
+					// params.go's fetchPresetMeta) -- redirect the actual
+					// device write to "program", same as the Load
+					// button's path above.
 					if val, ok := params.SetParam(ev.key, ev.val); ok {
-						cSetParam(plugin, ev.key, val)
-						if ev.key == "preset" {
-							params.syncFromPluginState(plugin)
+						deviceKey := ev.key
+						if deviceKey == "preset" {
+							deviceKey = "program"
+							// Keep the FILTER page's own "program" knob in
+							// sync too, same as the Push-hardware Load
+							// button path (audiosession.go's ctlBottomPress
+							// case, via scheduleProgramCommit).
+							params.SetParam("program", ev.val)
 						}
+						cSetParam(plugin, deviceKey, val)
 					}
 				}
 			default:

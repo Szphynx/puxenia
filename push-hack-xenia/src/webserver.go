@@ -39,6 +39,7 @@ const stateBroadcastInterval = 100 * time.Millisecond
 // beyond the SSE broker, since paramState/ioState/sharedConfig/audioStatus
 // are already the single source of truth the on-screen UI reads too.
 type webServer struct {
+	version string
 	params  *paramState
 	io      *ioState
 	astatus *audioStatus
@@ -51,6 +52,7 @@ func (ws *webServer) buildState() map[string]any {
 	ready, msg := ws.astatus.get()
 	snap := ws.params.Snapshot()
 	return map[string]any{
+		"version":      ws.version,
 		"page":         snap.Page,
 		"pageName":     snap.PageName,
 		"presetCursor": snap.PresetCursor,
@@ -174,11 +176,11 @@ func (ws *webServer) handleSetIO(set func(int) error) http.HandlerFunc {
 // fires. Fire-and-forget from runSupervised, same shape as
 // runDependencyWatcher/runDisplayLoop — it dies with the whole process on
 // crash/restart, consistent with every other hack exposing a web_ui.
-func runWebServer(port int, params *paramState, io *ioState, astatus *audioStatus, diag *diagStats,
+func runWebServer(port int, version string, params *paramState, io *ioState, astatus *audioStatus, diag *diagStats,
 	ctl chan<- controlEvent, shutdown <-chan struct{}) {
 
 	broker := sse.NewBroker[[]byte](8, false)
-	ws := &webServer{params: params, io: io, astatus: astatus, diag: diag, ctl: ctl, broker: broker}
+	ws := &webServer{version: version, params: params, io: io, astatus: astatus, diag: diag, ctl: ctl, broker: broker}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/state", ws.handleState)

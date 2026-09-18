@@ -134,24 +134,31 @@ func renderParamPage(st *paramState, io *ioState, astatus *audioStatus, level *l
 	if ready, msg := astatus.get(); !ready {
 		return renderWaitingScreen(msg)
 	}
+	var img *image.NRGBA
 	switch st.Page() {
 	case pagePresets:
-		return renderPresetsPage(st, level)
+		img = renderPresetsPage(st)
 	case pageSettings:
-		return io.render()
+		img = io.render()
 	default:
-		return renderKnobGrid(st, level)
+		img = renderKnobGrid(st)
 	}
+	st.mu.Lock()
+	volSlot := st.slots["channel_volume"]
+	st.mu.Unlock()
+	renderMasterMeter(img, level, volSlot)
+	return img
 }
 
 // renderKnobGrid draws OSC/AMP or FILTER: one cell per encoder slot (0-7)
-// on the Microwave XT-styled panel — a knob for a plain float param, a dark
-// yellow-text inset for the "engine" enum (mirroring the original
-// hardware's small OLED-style readout), or a live-level fader for Volume
-// (see levelMeter — shows actual output loudness, not just the parameter's
-// own position). Labels live in the bottom strip, not above each knob —
-// see DrawBotStrip below.
-func renderKnobGrid(st *paramState, level *levelMeter) *image.NRGBA {
+// on the Microwave XT-styled panel — a knob for a plain float param, or a
+// dark yellow-text inset for the "engine" enum (mirroring the original
+// hardware's small OLED-style readout). Labels live in the bottom strip,
+// not above each knob — see DrawBotStrip below. The live output-level
+// meter is a separate persistent overlay on every page — see
+// renderParamPage/renderMasterMeter — not drawn here even when
+// channel_volume happens to be one of this page's own knobs.
+func renderKnobGrid(st *paramState) *image.NRGBA {
 	img := image.NewNRGBA(image.Rect(0, 0, screenW, screenH))
 	gfx.FillRect(img, 0, 0, screenW, screenH, xtChassis)
 	renderTopTabs(img, xtTheme, st.Page())
@@ -180,8 +187,6 @@ func renderKnobGrid(st *paramState, level *levelMeter) *image.NRGBA {
 		cx := i*cellW + knobCX
 
 		switch {
-		case c.key == "volume":
-			renderVolumeFader(img, cx, level, c.slot)
 		case c.slot.meta.Type == "enum":
 			// quantizer_scale's option names ("MAJOR PENTATONIC" etc.) run
 			// longer than engine's shape names or resolution/sample_rate's
@@ -259,28 +264,36 @@ func dbFrac(peak float64) float64 {
 	return (db - meterMinDB) / -meterMinDB
 }
 
-// renderVolumeFader draws the Volume column as a fader whose fill tracks
-// the live output level (levelMeter) on a dB scale, plus a thin marker line
-// showing where the Volume parameter itself is set (volSlot) — the fill can
-// legitimately sit below that line (a quiet passage, a note that hasn't hit
-// yet) or briefly above it (transient peaks), so the two aren't expected to
-// coincide; the marker is what the encoder controls, the fill is what's
-// actually coming out right now.
-func renderVolumeFader(img *image.NRGBA, cx int, level *levelMeter, volSlot *paramSlot) {
-	const w = 34 // widened from 22 for legibility on Push's screen
-	x := cx - w/2
-	y := knobCY - knobR
-	h := 2 * knobR
+// renderMasterMeter draws a persistent output-level meter flush against
+// the screen's right edge — called once from renderParamPage after every
+// page's own content, so it shows on every page (knob grid, PRESETS,
+// SETTINGS) without depending on which page/column happens to hold
+// channel_volume, or needing each page renderer to know about it at all.
+// Placed outside column 7's knob-arc reach (knobCX+knobR maxes out at
+// 7*cellW+knobCX+knobR = 928; this starts at screenW-12 = 948) so it never
+// overlaps a real param knob.
+//
+// The fill tracks the live output level (levelMeter) on a dB scale; the
+// thin marker line shows where the channel_volume parameter itself is
+// set. The fill can legitimately sit below that line (a quiet passage, a
+// note that hasn't hit yet) or briefly above it (transient peaks), so the
+// two aren't expected to coincide — the marker is what the encoder
+// controls, the fill is what's actually coming out right now.
+func renderMasterMeter(img *image.NRGBA, level *levelMeter, volSlot *paramSlot) {
+	const w = 10
+	x := screenW - w - 2
+	y := topStripH + 2
+	h := screenH - botStripH - topStripH - 4
 	widgets.DrawFader(img, xtTheme, x, y, w, h, widgets.Knob{
 		Value: dbFrac(level.get()) * 100,
 		Min:   0,
 		Max:   100,
 	})
 	if volSlot != nil {
-		// Volume's own value is already a 0-1 linear amplitude (same units
-		// as levelMeter's peak), so dbFrac puts the marker on the exact
-		// same dB scale as the live fill above — a marker at 0.5 and a
-		// fill peaking at 0.5 land on the same line.
+		// channel_volume's own value is already a 0-1 linear amplitude
+		// (same units as levelMeter's peak), so dbFrac puts the marker on
+		// the exact same dB scale as the live fill above — a marker at
+		// 0.5 and a fill peaking at 0.5 land on the same line.
 		markY := y + h - int(float64(h)*dbFrac(volSlot.value))
 		gfx.FillRect(img, x-2, markY-2, w+4, 4, xtTeal)
 	}
@@ -290,11 +303,10 @@ func renderVolumeFader(img *image.NRGBA, cx int, level *levelMeter, volSlot *par
 // (not full-screen — encoder 1 moves a staged highlight, distinct from
 // the actually-loaded preset until Load/bottom-1 commits it), and octave
 // transpose as a pan-style knob in column 2, applied immediately.
-func renderPresetsPage(st *paramState, level *levelMeter) *image.NRGBA {
+func renderPresetsPage(st *paramState) *image.NRGBA {
 	st.mu.Lock()
 	presetSlot := st.slots["preset"]
 	octSlot := st.slots["octave_transpose"]
-	volSlot := st.slots["channel_volume"]
 	st.mu.Unlock()
 
 	img := image.NewNRGBA(image.Rect(0, 0, screenW, screenH))
@@ -347,11 +359,6 @@ func renderPresetsPage(st *paramState, level *levelMeter) *image.NRGBA {
 			ValueScale: 2,
 		})
 	}
-
-	// Master-out level stays visible here too — PRESETS is the one
-	// knob-grid page that doesn't go through renderKnobGrid, which is
-	// where every other page picks this up (see renderVolumeFader's doc).
-	renderVolumeFader(img, cellW*2+knobCX, level, volSlot)
 
 	var bottom [8]widgets.SoftButton
 	bottom[0] = widgets.SoftButton{Label: "LOAD", State: widgets.SoftConfirm}
