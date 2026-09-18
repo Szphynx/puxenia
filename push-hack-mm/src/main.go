@@ -131,6 +131,15 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 			ev = controlEvent{kind: ctlEncoder, idx: int(cc) - push3.CCEncoder1, delta: push3.DecodeRel(val)}
 		case cc >= push3.CCScreenTop1 && int(cc)-int(push3.CCScreenTop1) < len(pageNames) && val == 127:
 			ev = controlEvent{kind: ctlPageJump, idx: int(cc) - push3.CCScreenTop1}
+		case cc == push3.CCScreenBot8 && val == 127 && h.params.Page() == pageSettings:
+			// EXIT, bottom-right on the SETTINGS page (see iopage.go's
+			// render() / leds.go's pageBottomLit) -- same UI-only action as
+			// the Shift+Device chord (onChordCC), so it's dispatched the
+			// same way: directly here, never through ctlCh, since toggleUI
+			// only talks to push-manager over HTTP and never touches the
+			// DSP plugin (no render-goroutine restriction applies to it).
+			go toggleUI(h.pmURL, h.params, h.io, h.astatus, h.seq, h.level)
+			return
 		case cc >= push3.CCScreenBot1 && cc <= push3.CCScreenBot8 && val == 127:
 			ev = controlEvent{kind: ctlBottomPress, idx: int(cc) - push3.CCScreenBot1}
 		case cc == push3.CCDPadLeft && val == 127:

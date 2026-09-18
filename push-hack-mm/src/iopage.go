@@ -356,6 +356,14 @@ func (io *ioState) render() *image.NRGBA {
 	}
 	drawSettingsColumn(img, 3*settingsColW, "MIDI CHANNEL", recvChLabels, io.recvChCursor)
 
+	var bottom [8]widgets.SoftButton
+	bottom[0] = widgets.SoftButton{Label: "SET"}
+	bottom[2] = widgets.SoftButton{Label: "SET"}
+	bottom[4] = widgets.SoftButton{Label: "SET"}
+	bottom[6] = widgets.SoftButton{Label: "SET"}
+	bottom[7] = widgets.SoftButton{Label: "EXIT"}
+	widgets.DrawBotStrip(img, widgets.Default, screenH-botStripH, screenW, cellW, botStripH, bottom, "")
+
 	return img
 }
 

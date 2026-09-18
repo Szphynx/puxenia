@@ -74,7 +74,7 @@ var (
 
 var pageBottomLit = map[int][]int{
 	pageSeq:      {1, 2, 3, 4},
-	pageSettings: {1, 3, 5, 7},
+	pageSettings: {1, 3, 5, 7, 8}, // 8 = EXIT, see main.go's Fixed() handler
 }
 
 // syncUILEDs blanks the whole control surface then lights only what's
