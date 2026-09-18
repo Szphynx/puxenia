@@ -296,6 +296,75 @@ namespace
 		inst->device->sendMidiEvent(ev);
 	}
 
+	// sendSingleParamChange sends a Sound/Single Parameter Change SysEx
+	// (IDM 0x20h) -- format F0 3E 0E DEV 20h LOC IH IL XX F7. This, not a
+	// plain Control Change, is how most sound-editing parameters (filter
+	// cutoff/resonance/etc.) are actually meant to be set in real time:
+	// the device's own MIDI Implementation Chart lists only 7 CCs as
+	// directly recognized (1/2/5/7/10/32/64 -- Modwheel/Breath/Portamento
+	// Time/Volume/Pan/Bank Select/Sustain), with a footnote pointing
+	// elsewhere for everything else. That "everything else" turned out to
+	// be this SysEx mechanism, addressed by the SDATA byte-offset table
+	// (gearmulator's xtLib confirms the exact wire format: xtMidiTypes.h's
+	// SysexCommand::SingleParameterChange = 0x20, xtState.cpp's
+	// getSingleParameter/modifySingle). LOC (the byte after the command)
+	// is the "location" byte -- irrelevant here since XT single mode's
+	// SingleEditBufferSingleMode always targets the live edit buffer
+	// regardless of its value (xtState.cpp's getSingle() ignores it for
+	// that case) -- sent as 0x20 by convention, matching that enum value.
+	// paramIndex is the SDATA table's "Index" column (e.g. 62 for Filter 1
+	// Cutoff), split into two 7-bit bytes exactly like GLBP's global index
+	// would be if it needed more than 7 bits -- xtState.cpp's
+	// getParameter(): index = (data[idxH] << 7) + data[idxL].
+	void sendSingleParamChange(XeniaInstance *inst, uint16_t paramIndex, uint8_t value)
+	{
+		synthLib::SMidiEvent ev(synthLib::MidiEventSource::Host);
+		auto &sx = ev.sysex;
+		sx.push_back(0xF0);
+		sx.push_back(0x3E);
+		sx.push_back(0x0E);
+		sx.push_back(0x7F); // DEV: broadcast
+		sx.push_back(0x20); // IDM: Single Parameter Change
+		sx.push_back(0x20); // LOC: ignored for the live edit buffer in single mode
+		sx.push_back(static_cast<uint8_t>((paramIndex >> 7) & 0x7F));
+		sx.push_back(static_cast<uint8_t>(paramIndex & 0x7F));
+		sx.push_back(value);
+		sx.push_back(0xF7);
+		inst->device->sendMidiEvent(ev);
+	}
+
+	// kSysexParams: params confirmed against the real SDATA index table
+	// (from the device's own service documentation, "3. Data Formats /
+	// 3.1 SDATA - Sound Data") to need sendSingleParamChange instead of a
+	// plain CC -- see sendSingleParamChange's doc above for why. Deliberately
+	// small and conservative: only keys whose index has actually been read
+	// off that table are listed here. Every other kParams entry not in
+	// this list, and not Program Change, still goes out as a plain CC via
+	// kParams' own outCC field -- correct for the 7 keys that really are
+	// hardwired CCs per the MIDI Implementation Chart (mod_wheel=1,
+	// channel_volume=7, panning=10, sustain=64, glide_time=5), but very
+	// likely ALSO wrong (silently inert, same symptom this fixes for the
+	// filter) for the remaining kParams entries whose CC numbers came from
+	// a misread of the same source document -- those still need their own
+	// SDATA index looked up and added here before they'll audibly work.
+	struct SysexParamDef { const char *key; uint16_t sdataIndex; };
+	constexpr SysexParamDef kSysexParams[] = {
+		{"cutoff",              62},
+		{"resonance",           63},
+		{"filter_type",         64},
+		{"filter_keytrack",     65},
+		{"filter_env_amount",   66},
+		{"filter_env_velocity", 67},
+		{"filter2_cutoff",      73},
+	};
+	const SysexParamDef *findSysexParam(const char *key)
+	{
+		for(const auto &p : kSysexParams)
+			if(strcmp(p.key, key) == 0)
+				return &p;
+		return nullptr;
+	}
+
 	void trackNoteOn(XeniaInstance *inst, uint8_t note)
 	{
 		for(auto &n : inst->activeNotes)
@@ -557,7 +626,12 @@ namespace
 		try
 		{
 			inst->paramValues[key] = v;
-			if(def->outCC == kProgramSentinel)
+			if(const SysexParamDef *sp = findSysexParam(key))
+			{
+				fprintf(stdout, "[xenia_plugin] set_param %s=%u -> SingleParamChange idx=%u val=%u\n", key, v, sp->sdataIndex, v);
+				sendSingleParamChange(inst, sp->sdataIndex, v);
+			}
+			else if(def->outCC == kProgramSentinel)
 			{
 				fprintf(stdout, "[xenia_plugin] set_param %s=%u -> ProgramChange %u (ch10)\n", key, v, v);
 				sendToDevice(inst, static_cast<uint8_t>(0xC0 | kWorkingChannel0Indexed), v, 0);
