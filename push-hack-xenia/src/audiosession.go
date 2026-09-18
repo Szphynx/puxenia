@@ -31,6 +31,35 @@ func cSetParam(plugin *C.bridge_plugin_t, key, val string) {
 	C.free(unsafe.Pointer(v))
 }
 
+// asyncLogCh decouples logging from audioSession.run's render goroutine.
+// log.Printf does a blocking, unbuffered write to stdout -- fine anywhere
+// else, but on the one goroutine that also renders audio every block, that
+// write stalling (e.g. over an SSH pipe, not a local tty) is an audible
+// micro-stutter timed exactly to whenever a line gets printed. Confirmed on
+// real hardware: "every time I see a line appear on the terminal the audio
+// stutters slightly" -- the same class of bug as xtPic.cpp's MCLOG flood
+// (see xenia_plugin.cpp's mc68k::logToConsole override), just from our own
+// Go-side logging instead of gearmulator's. alogf never blocks the caller;
+// a full buffer just drops the line, same posture as every other "channel
+// full, dropped" spot in this codebase.
+var asyncLogCh = make(chan string, 64)
+
+func init() {
+	go func() {
+		for line := range asyncLogCh {
+			log.Print(line)
+		}
+	}()
+}
+
+func alogf(format string, args ...interface{}) {
+	line := fmt.Sprintf(format, args...)
+	select {
+	case asyncLogCh <- line:
+	default:
+	}
+}
+
 // programDebounce coalesces rapid "program" (patch select) encoder ticks
 // into a single device-facing commit after scrolling settles -- reported
 // symptom: cycling through patches quickly made audio drop out and stay
@@ -424,7 +453,7 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 		}
 		if preElapsed > budget {
 			slowBlocks++
-			log.Printf("SLOW BLOCK #%d: drain+render+expand took %v, budget %v",
+			alogf("SLOW BLOCK #%d: drain+render+expand took %v, budget %v",
 				blocks, preElapsed, budget)
 		}
 
@@ -461,7 +490,7 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 			}
 			C.free(unsafe.Pointer(key))
 
-			log.Printf("progress: blocks=%d slow=%d maxPre=%v maxWrite=%v cpu=%.1f%% voices=%d",
+			alogf("progress: blocks=%d slow=%d maxPre=%v maxWrite=%v cpu=%.1f%% voices=%d",
 				blocks, slowBlocks, maxPre, maxWrite, cpuPct, diag.getVoices())
 			maxPre, maxWrite = 0, 0
 			lastReport = time.Now()
@@ -469,7 +498,7 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 
 		if int(written) < 0 {
 			xrunRetries++
-			log.Printf("bridge_pcm_writei error (retry #%d): rc=%d", xrunRetries, written)
+			alogf("bridge_pcm_writei error (retry #%d): rc=%d", xrunRetries, written)
 			continue
 		}
 		blocks++

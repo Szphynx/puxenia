@@ -710,20 +710,25 @@ namespace
 
 		try
 		{
+			// No debug fprintf here on purpose: xenia_set_param runs on the
+			// same goroutine/thread that renders audio (see midiHandler's
+			// doc comment in main.go), and a blocking, unbuffered stdout
+			// write on every single param change (every encoder detent)
+			// was an audible micro-stutter on real hardware -- confirmed
+			// by the same mechanism as xtPic.cpp's MCLOG flood (see the
+			// mc68k::logToConsole override above), just triggered by our
+			// own debug logging instead of gearmulator's.
 			inst->paramValues[key] = v;
 			if(const SysexParamDef *sp = findSysexParam(key))
 			{
-				fprintf(stdout, "[xenia_plugin] set_param %s=%u -> SingleParamChange idx=%u val=%u\n", key, v, sp->sdataIndex, v);
 				sendSingleParamChange(inst, sp->sdataIndex, v);
 			}
 			else if(def->outCC == kProgramSentinel)
 			{
-				fprintf(stdout, "[xenia_plugin] set_param %s=%u -> ProgramChange %u (ch10)\n", key, v, v);
 				sendToDevice(inst, static_cast<uint8_t>(0xC0 | kWorkingChannel0Indexed), v, 0);
 			}
 			else if(def->outCC != 0)
 			{
-				fprintf(stdout, "[xenia_plugin] set_param %s=%u -> CC%u=%u (ch10)\n", key, v, def->outCC, v);
 				sendToDevice(inst, static_cast<uint8_t>(0xB0 | kWorkingChannel0Indexed), def->outCC, v);
 			}
 			// outCC == 0: tracked on screen/web UI only -- see kParams'
