@@ -9,10 +9,14 @@ package main
 // cursor across all three.
 
 import (
+	"encoding/binary"
 	"fmt"
 	"image"
+	"image/color"
 	"log"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/federico-pepe/ableton-push-hack/core/alsapcm"
 	"github.com/federico-pepe/ableton-push-hack/core/alsaseq"
@@ -26,6 +30,58 @@ import (
 // independent of whatever a live PCM session actually negotiated.
 const loopbackChannels = 32
 
+// midiMonitor is a raw-traffic debug indicator for the SETTINGS page's
+// MIDI IN column. It records every event midiHandler.Fixed() sees from
+// Push3, on whatever port, BEFORE any note-range/port/channel filtering --
+// so it stays useful for answering "is anything arriving at all" even when
+// the rest of the pipeline silently drops the event. Lock-free: written on
+// the ALSA read-loop goroutine, read on the display goroutine.
+type midiMonitor struct {
+	count    atomic.Uint64
+	lastNano atomic.Int64
+	tagMu    sync.Mutex
+	tag      string
+}
+
+func (m *midiMonitor) note(evType uint8, port byte, data []byte) {
+	m.count.Add(1)
+	m.lastNano.Store(time.Now().UnixNano())
+
+	var kind, detail string
+	switch evType {
+	case alsaseq.EvNoteOn:
+		kind, detail = "On", fmt.Sprintf("ch%d n%d v%d", data[0]&0x0F, data[1], data[2])
+	case alsaseq.EvNoteOff:
+		kind, detail = "Off", fmt.Sprintf("ch%d n%d", data[0]&0x0F, data[1])
+	case alsaseq.EvController:
+		cc := uint8(binary.LittleEndian.Uint32(data[4:]) & 0x7F)
+		val := uint8(binary.LittleEndian.Uint32(data[8:]) & 0x7F)
+		kind, detail = "CC", fmt.Sprintf("ch%d cc%d v%d", data[0]&0x0F, cc, val)
+	case alsaseq.EvPitchBend:
+		kind, detail = "PB", fmt.Sprintf("ch%d", data[0]&0x0F)
+	default:
+		kind = fmt.Sprintf("ev%d", evType)
+	}
+
+	tag := fmt.Sprintf("p%d %s %s", port, kind, detail)
+	m.tagMu.Lock()
+	m.tag = tag
+	m.tagMu.Unlock()
+}
+
+// snapshot reports the last recorded event, whether it landed within the
+// last 400ms (drives the on-screen activity dot), and the total count
+// since boot (so "nothing lately" can still be told apart from "nothing
+// ever").
+func (m *midiMonitor) snapshot() (tag string, active bool, count uint64) {
+	m.tagMu.Lock()
+	tag = m.tag
+	m.tagMu.Unlock()
+	active = time.Since(time.Unix(0, m.lastNano.Load())) < 400*time.Millisecond
+	count = m.count.Load()
+	return
+}
+
 // ioState holds the SETTINGS page's 3 independent column cursors. Each
 // column rebuilds its own option list fresh on every move/render (this
 // page is opened rarely and ALSA's /proc reads are cheap) rather than
@@ -34,12 +90,13 @@ type ioState struct {
 	mu      sync.Mutex
 	hackDir string
 	rt      *sharedConfig
+	mon     *midiMonitor
 
 	midiCursor, deviceCursor, channelCursor, recvChCursor int
 }
 
 func newIOState(hackDir string, rt *sharedConfig) *ioState {
-	return &ioState{hackDir: hackDir, rt: rt}
+	return &ioState{hackDir: hackDir, rt: rt, mon: &midiMonitor{}}
 }
 
 // midiOptions is one selectable row in the MIDI column.
@@ -340,15 +397,19 @@ func (io *ioState) SetRecvChannelByIndex(i int) error {
 const settingsRowH = 13
 const settingsColW = 2 * cellW // each of the 3 columns spans 2 of the 8 encoder slots
 
-// render draws the 3 columns side by side. screenW/screenH/cellW come from
-// display.go.
-func (io *ioState) render() *image.NRGBA {
+// render draws the 3 columns side by side, plus the MIDI IN and AUDIO
+// OUTPUT debug indicators (raw-traffic tag/dot, live level bar) requested
+// after "notes still don't play even on Live Port" made it clear the on-
+// screen picker alone couldn't say whether bytes were arriving at all.
+// screenW/screenH/cellW come from display.go.
+func (io *ioState) render(level *levelMeter) *image.NRGBA {
 	io.mu.Lock()
 	defer io.mu.Unlock()
 
 	img := image.NewNRGBA(image.Rect(0, 0, screenW, screenH))
 	gfx.FillRect(img, 0, 0, screenW, screenH, widgets.Default.Black)
 	renderTopTabs(img, widgets.Default, pageSettings)
+	t := widgets.Default
 
 	curClient, curPort := io.rt.getMIDI()
 	curDevice := io.rt.getPCM()
@@ -363,7 +424,15 @@ func (io *ioState) render() *image.NRGBA {
 		}
 		midiLabels[i] = mark + r.label
 	}
-	drawSettingsColumn(img, 0*settingsColW, "MIDI IN", midiLabels, io.midiCursor)
+	drawColumnTitle(img, 0*settingsColW, "MIDI IN", t.Gray)
+	tag, active, count := io.mon.snapshot()
+	dotCol := t.Gray
+	if active {
+		dotCol = t.White
+	}
+	gfx.FillRect(img, 0*settingsColW+settingsColW-10, 22, 6, 6, dotCol)
+	text.Draw(img, 0*settingsColW+4, 41, fmt.Sprintf("%d %s", count, tag), t.Gray)
+	drawColumnRows(img, 0*settingsColW, 46, midiLabels, io.midiCursor)
 
 	deviceRows := io.buildDeviceRowsLocked()
 	deviceLabels := make([]string, len(deviceRows))
@@ -374,7 +443,11 @@ func (io *ioState) render() *image.NRGBA {
 		}
 		deviceLabels[i] = mark + r.label
 	}
-	drawSettingsColumn(img, 1*settingsColW, "AUDIO OUTPUT", deviceLabels, io.deviceCursor)
+	drawColumnTitle(img, 1*settingsColW, "AUDIO OUTPUT", t.Gray)
+	gfx.FillRect(img, 1*settingsColW+4, 34, settingsColW-12, 4, t.Black)
+	barW := int(dbFrac(level.get()) * float64(settingsColW-12))
+	gfx.FillRect(img, 1*settingsColW+4, 34, barW, 4, t.White)
+	drawColumnRows(img, 1*settingsColW, 46, deviceLabels, io.deviceCursor)
 
 	channelRows := io.buildChannelRowsLocked()
 	channelLabels := make([]string, len(channelRows))
@@ -385,7 +458,8 @@ func (io *ioState) render() *image.NRGBA {
 		}
 		channelLabels[i] = mark + r.label
 	}
-	drawSettingsColumn(img, 2*settingsColW, "AUDIO CHANNEL", channelLabels, io.channelCursor)
+	drawColumnTitle(img, 2*settingsColW, "AUDIO CHANNEL", t.Gray)
+	drawColumnRows(img, 2*settingsColW, 34, channelLabels, io.channelCursor)
 
 	curRecvCh := io.rt.getRecvChannel()
 	recvChRows := io.buildRecvChannelRowsLocked()
@@ -397,20 +471,25 @@ func (io *ioState) render() *image.NRGBA {
 		}
 		recvChLabels[i] = mark + r.label
 	}
-	drawSettingsColumn(img, 3*settingsColW, "MIDI CHANNEL", recvChLabels, io.recvChCursor)
+	drawColumnTitle(img, 3*settingsColW, "MIDI CHANNEL", t.Gray)
+	drawColumnRows(img, 3*settingsColW, 34, recvChLabels, io.recvChCursor)
 
 	return img
 }
 
-// drawSettingsColumn draws one column's title and scrollable row list —
+// drawColumnTitle draws just a column's heading — split out from the row
+// list so MIDI IN/AUDIO OUTPUT can insert their debug indicator between
+// the two without duplicating the row-scrolling logic.
+func drawColumnTitle(img *image.NRGBA, x int, title string, col color.NRGBA) {
+	text.Draw(img, x+4, 28, title, col)
+}
+
+// drawColumnRows draws one column's scrollable row list starting at top —
 // none of widgets' list helpers take an x-offset (they all draw at x=0
 // spanning a caller-given width), so this is a small hand-rolled column
 // renderer rather than 3 calls to widgets.RenderList.
-func drawSettingsColumn(img *image.NRGBA, x int, title string, labels []string, cursor int) {
+func drawColumnRows(img *image.NRGBA, x int, top int, labels []string, cursor int) {
 	t := widgets.Default
-	text.Draw(img, x+4, 28, title, t.Gray)
-
-	const top = 34
 	visRows := (screenH - top) / settingsRowH
 	scroll := cursor - visRows/2
 	if scroll < 0 {

@@ -133,6 +133,12 @@ type controlEvent struct {
 func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 	fromPush3 := src.Client == alsaseq.Push3ClientDefault
 
+	// Record raw traffic for the SETTINGS page's MIDI IN activity monitor
+	// before any of the filtering below — see midiMonitor's doc comment.
+	if fromPush3 && h.io != nil {
+		h.io.mon.note(evType, src.Port, data)
+	}
+
 	if evType == alsaseq.EvController {
 		// Only Push3's own default port drives the on-screen controls —
 		// merging everything onto one port means CC could otherwise arrive

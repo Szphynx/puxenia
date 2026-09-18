@@ -139,7 +139,7 @@ func renderParamPage(st *paramState, io *ioState, astatus *audioStatus, level *l
 	case pagePresets:
 		img = renderPresetsPage(st)
 	case pageSettings:
-		img = io.render()
+		img = io.render(level)
 	default:
 		img = renderKnobGrid(st)
 	}
