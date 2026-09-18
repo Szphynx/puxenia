@@ -1,0 +1,10 @@
+{
+  "id": "push-mm",
+  "name": "Monomachine",
+  "description": "Elektron Monomachine (SFX-60/6) emulation (gearmulator-md-mm's mdLib) running as a Move Anything plugin_api_v2 DSP module. Reads Push 3's own pad/button MIDI and renders audio into push-audio-loopback's virtual card. 58 params per track (Synthesis A-H, Amplification, Filter, Effects, LFO 1-3, Level, Mute) across the 6 real Monomachine tracks, split into 2 banks of 8 pages flipped with D-Pad Left/Right, plus SEQ/SETTINGS pinned to both banks. D-Pad Up/Down selects the active track (live-played notes and the 8 param encoders both follow it). Push's 8x8 pad grid is dual-mode: normally each pad plays the selected track live; on the SEQ page the same pads become a 6-track x 16-step grid sequencer (row = track) by simulating the real front panel's Track-select and Trigger-key presses, driving mdLib's own actual Monomachine firmware sequencer rather than a reimplementation. Live CPU%/active-voice diagnostics and a decoded LCD framebuffer visualizer in the browser UI. Needs push-audio-loopback (waits for it at startup and after every restart) and push-manager + push-display for on-screen encoder/pad-LED controls. Requires a legally-owned Monomachine OS 1.32b ROM (.bin, 8MiB) placed in module/roms/ — not included.",
+  "version": "0.1.0",
+  "author": "Sphynx",
+  "binary": "push-mm",
+  "enabled": true,
+  "web_ui": { "label": "Monomachine", "path": "/" }
+}

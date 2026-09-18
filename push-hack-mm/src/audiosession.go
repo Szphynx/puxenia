@@ -1,0 +1,610 @@
+package main
+
+/*
+#include "bridge.h"
+#include <stdlib.h>
+*/
+import "C"
+
+import (
+	"fmt"
+	"log"
+	"math"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unsafe"
+
+	"push-mm/hwparams"
+)
+
+// cSetParam is bridge_plugin_set_param's CString/free boilerplate, shared
+// by every drainCtl case that sends a param to the plugin. Identical to
+// push-hack-xenia/src/audiosession.go's own helper.
+func cSetParam(plugin *C.bridge_plugin_t, key, val string) {
+	k, v := C.CString(key), C.CString(val)
+	C.bridge_plugin_set_param(plugin, k, v)
+	C.free(unsafe.Pointer(k))
+	C.free(unsafe.Pointer(v))
+}
+
+// ctlChWrite is a writable handle onto the same channel main.go passes
+// everywhere else as receive-only (<-chan controlEvent) — kept for parity
+// with push-hack-xenia's shape even though this host currently has no
+// debounced-commit timer of its own (Monomachine has no Xenia-style
+// slow-patch-load state machine to protect against a flood of quick
+// writes — panel taps and CC automation are both simple per-message
+// operations on real hardware).
+var ctlChWrite chan<- controlEvent
+
+type levelMeter struct{ bits atomic.Uint64 }
+
+func (m *levelMeter) set(v float64) { m.bits.Store(math.Float64bits(v)) }
+func (m *levelMeter) get() float64  { return math.Float64frombits(m.bits.Load()) }
+
+type diagStats struct {
+	cpuBits atomic.Uint64
+	voices  atomic.Int32
+}
+
+func (d *diagStats) setCPU(pct float64) { d.cpuBits.Store(math.Float64bits(pct)) }
+func (d *diagStats) getCPU() float64    { return math.Float64frombits(d.cpuBits.Load()) }
+func (d *diagStats) setVoices(n int)    { d.voices.Store(int32(n)) }
+func (d *diagStats) getVoices() int     { return int(d.voices.Load()) }
+
+func selfCPUTicks() (uint64, error) {
+	data, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		return 0, err
+	}
+	s := string(data)
+	end := strings.LastIndex(s, ")")
+	if end < 0 {
+		return 0, fmt.Errorf("bad /proc/self/stat")
+	}
+	fields := strings.Fields(s[end+1:])
+	if len(fields) < 13 {
+		return 0, fmt.Errorf("short /proc/self/stat")
+	}
+	utime, _ := strconv.ParseUint(fields[11], 10, 64)
+	stime, _ := strconv.ParseUint(fields[12], 10, 64)
+	return utime + stime, nil
+}
+
+func systemCPUTicks() (uint64, error) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "cpu ") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 8 {
+			break
+		}
+		var total uint64
+		for i := 1; i < 8; i++ {
+			v, _ := strconv.ParseUint(f[i], 10, 64)
+			total += v
+		}
+		return total, nil
+	}
+	return 0, fmt.Errorf("no cpu line in /proc/stat")
+}
+
+// audioSession owns one open PCM handle and the goroutine rendering into
+// it — identical shape to push-hack-xenia/src/audiosession.go's own type.
+type audioSession struct {
+	pcm      *C.bridge_pcm_t
+	period   int
+	channels int
+	stopCh   chan struct{}
+	doneCh   chan struct{}
+}
+
+func startAudioSession(plugin *C.bridge_plugin_t, device string, hp hwparams.Params,
+	midiCh <-chan [3]byte, ctlCh <-chan controlEvent, params *paramState, io *ioState, seq *seqState, rt *sharedConfig,
+	level *levelMeter, diag *diagStats) (*audioSession, error) {
+
+	cDev := C.CString(device)
+	defer C.free(unsafe.Pointer(cDev))
+	pcm := C.bridge_pcm_open(cDev, C.uint(hp.Channels), C.uint(hp.Rate), C.uint(hp.Period), C.uint(hp.Buffer))
+	if pcm == nil {
+		return nil, errBridge("bridge_pcm_open")
+	}
+
+	s := &audioSession{
+		pcm:      pcm,
+		period:   int(C.bridge_pcm_period(pcm)),
+		channels: int(C.bridge_pcm_channels(pcm)),
+		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
+	}
+	log.Printf("audio session opened: device=%s channels=%d rate=%d period=%d (requested period=%d buffer=%d)",
+		device, s.channels, hp.Rate, s.period, hp.Period, hp.Buffer)
+
+	go s.run(plugin, midiCh, ctlCh, params, io, seq, rt, hp.Rate, level, diag)
+	return s, nil
+}
+
+func (s *audioSession) stop() {
+	close(s.stopCh)
+	<-s.doneCh
+}
+
+// run is the real-time render loop: drain MIDI/control events, render a
+// block, write it out. Same discipline as push-hack-xenia's own run: every
+// bridge_plugin_* call happens here, on this one goroutine.
+func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctlCh <-chan controlEvent,
+	params *paramState, io *ioState, seq *seqState, rt *sharedConfig, rate int, level *levelMeter, diag *diagStats) {
+	defer close(s.doneCh)
+	defer C.bridge_pcm_close(s.pcm)
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if rc := C.bridge_set_realtime(50); rc != 0 {
+		log.Printf("warning: SCHED_FIFO unavailable (rc=%d) — continuing SCHED_OTHER", rc)
+	}
+
+	stereo := make([]int16, s.period*2)
+	wide := make([]int16, s.period*s.channels)
+	budget := time.Duration(s.period) * time.Second / time.Duration(rate)
+
+	const meterTau = 0.3
+	meterDecay := math.Exp(-float64(s.period) / float64(rate) / meterTau)
+
+	var blocks, xrunRetries, notesReceived, slowBlocks int64
+	var maxPre, maxWrite time.Duration
+	lastReport := time.Now()
+	lastSelfTicks, _ := selfCPUTicks()
+	lastSysTicks, _ := systemCPUTicks()
+	lastPanelPoll := time.Time{}
+	panelKey := C.CString("panel_state")
+	defer C.free(unsafe.Pointer(panelKey))
+	panelBuf := make([]byte, 4096)
+
+	for {
+		select {
+		case <-s.stopCh:
+			log.Printf("audio session stopped after %d blocks (%d xrun retries, %d notes, %d slow blocks)",
+				blocks, xrunRetries, notesReceived, slowBlocks)
+			return
+		default:
+		}
+
+		blockStart := time.Now()
+
+	drainMIDI:
+		for {
+			select {
+			case msg := <-midiCh:
+				notesReceived++
+				cMsg := (*C.uint8_t)(unsafe.Pointer(&msg[0]))
+				C.bridge_plugin_on_midi(plugin, cMsg, 3)
+			default:
+				break drainMIDI
+			}
+		}
+
+	drainCtl:
+		for {
+			select {
+			case ev := <-ctlCh:
+				switch ev.kind {
+				case ctlPageJump:
+					params.setPage(ev.idx)
+
+				case ctlBankFlip:
+					setBank(params, ev.idx)
+
+				case ctlTrackStep:
+					// D-Pad Up/Down: works on every page/bank, same
+					// "always live" posture as Xenia's master-volume
+					// encoder. Re-selecting the track on the plugin also
+					// taps its front-panel Track button there (see
+					// mm_plugin.cpp's selectTrack), and every slider must
+					// then be resynced to that track's own values.
+					if val, ok := params.NudgeTrack(ev.delta); ok {
+						cSetParam(plugin, "track", val)
+						params.syncFromPluginState(plugin)
+					}
+
+				case ctlToggleStep:
+					track, step := ev.idx, ev.delta
+					cSetParam(plugin, "toggle_step", fmt.Sprintf("%d,%d", track, step))
+					seq.ToggleStep(track, step)
+					// toggle_step on the plugin side also selects track
+					// (mm_plugin.cpp's toggleStep -> selectTrack) if it
+					// wasn't already current — mirror that here so the
+					// "track" slot and every param slider follow which
+					// row the user just tapped, same as a human pressing
+					// a track-select button on real hardware before
+					// programming its steps.
+					if params.CurrentTrack() != track {
+						params.SetParam("track", float64(track))
+						params.syncFromPluginState(plugin)
+					}
+					params.MarkDirty()
+
+				case ctlMuteToggle:
+					cSetParam(plugin, "toggle_mute", strconv.Itoa(ev.idx))
+					seq.ToggleMute(ev.idx)
+					params.MarkDirty()
+
+				case ctlBottomPress:
+					switch params.Page() {
+					case pageSeq:
+						switch ev.idx {
+						case 0: // PAGE: steps 1-8 <-> 9-16
+							seq.TogglePage()
+						case 1:
+							doTransport(plugin, seq, "play")
+						case 2:
+							doTransport(plugin, seq, "stop")
+						case 3:
+							doTransport(plugin, seq, "record")
+						}
+						params.MarkDirty()
+					case pageSettings:
+						switch ev.idx {
+						case 0:
+							io.commitMIDI()
+							params.MarkDirty()
+						case 2:
+							io.commitDevice()
+							params.MarkDirty()
+						case 4:
+							io.commitChannel()
+							params.MarkDirty()
+						case 6:
+							io.commitRecvChannel()
+							params.MarkDirty()
+						}
+					}
+
+				case ctlEncoder:
+					switch params.Page() {
+					case pageSeq:
+						if ev.idx == 0 {
+							// BASE CHANNEL — the only encoder bound on
+							// SEQ (see params.go's bankPageNames doc for
+							// why there was no room for it as its own
+							// SETTINGS column). 0-15, plain +1/-1 per
+							// tick (no acceleration throttling needed for
+							// a 16-value range).
+							ch := rt.getBaseChannel() + sign(ev.delta)
+							if ch < 0 {
+								ch = 0
+							}
+							if ch > 15 {
+								ch = 15
+							}
+							rt.setBaseChannel(ch)
+							cSetParam(plugin, "base_channel", strconv.Itoa(ch))
+							if err := saveConfig(io.HackDir(), rt.snapshot()); err != nil {
+								log.Printf("SEQ: saving %s: %v", configFileName, err)
+							}
+							params.MarkDirty()
+						}
+					case pageSettings:
+						switch ev.idx {
+						case 0:
+							io.moveMIDICursor(ev.delta)
+						case 2:
+							io.moveDeviceCursor(ev.delta)
+						case 4:
+							io.moveChannelCursor(ev.delta)
+						case 6:
+							io.moveRecvChannelCursor(ev.delta)
+						}
+						params.MarkDirty()
+					default:
+						if key, val, ok := params.applyEncoder(ev.idx, ev.delta); ok {
+							cSetParam(plugin, key, val)
+						}
+					}
+
+				case ctlSetParam:
+					if val, ok := params.SetParam(ev.key, ev.val); ok {
+						if ev.key == "track" {
+							cSetParam(plugin, "track", val)
+							params.syncFromPluginState(plugin)
+						} else {
+							cSetParam(plugin, ev.key, val)
+						}
+					}
+
+				case ctlTransport:
+					// Web UI's transport buttons — same panel taps as the
+					// SEQ page's bottom-screen buttons, but callable
+					// regardless of which page Push's own screen is
+					// currently showing (see this event's doc in main.go).
+					doTransport(plugin, seq, ev.key)
+					params.MarkDirty()
+
+				case ctlStepPage:
+					if ev.idx == 0 {
+						seq.TogglePage()
+					} else {
+						seq.SetStepPage(ev.delta)
+					}
+					params.MarkDirty()
+				}
+			default:
+				break drainCtl
+			}
+		}
+
+		// Throttled panel_state poll — see panelstate.go's doc for why
+		// this is the only goroutine allowed to call into the plugin.
+		// panelStatePollInterval (100ms) matches the display loop's own
+		// redraw cadence, so pad LEDs/on-screen SEQ grid never lag behind
+		// a fresher snapshot they could have had.
+		if now := time.Now(); now.Sub(lastPanelPoll) >= panelStatePollInterval*time.Millisecond {
+			lastPanelPoll = now
+			if n := C.bridge_plugin_get_param(plugin, panelKey,
+				(*C.char)(unsafe.Pointer(&panelBuf[0])), C.int(len(panelBuf))); n >= 0 {
+				if snap, ok := decodePanelState(string(panelBuf[:n])); ok {
+					globalPanelState.set(snap)
+				}
+			}
+		}
+
+		C.bridge_plugin_render(plugin,
+			(*C.int16_t)(unsafe.Pointer(&stereo[0])), C.int(s.period))
+
+		blockPeak := 0.0
+		for _, v := range stereo {
+			if a := math.Abs(float64(v)) / 32768.0; a > blockPeak {
+				blockPeak = a
+			}
+		}
+		level.set(math.Max(level.get()*meterDecay, blockPeak))
+
+		for i := range wide {
+			wide[i] = 0
+		}
+		offset := rt.getChannelOffset()
+		if offset < 0 || offset+1 >= s.channels {
+			offset = 0
+		}
+		for f := 0; f < s.period; f++ {
+			base := f*s.channels + offset
+			wide[base] = stereo[f*2+0]
+			if offset+1 < s.channels {
+				wide[base+1] = stereo[f*2+1]
+			}
+		}
+
+		preElapsed := time.Since(blockStart)
+		if preElapsed > maxPre {
+			maxPre = preElapsed
+		}
+		if preElapsed > budget {
+			slowBlocks++
+			log.Printf("SLOW BLOCK #%d: drain+render+expand took %v, budget %v",
+				blocks, preElapsed, budget)
+		}
+
+		writeStart := time.Now()
+		written := C.bridge_pcm_writei(s.pcm,
+			(*C.int16_t)(unsafe.Pointer(&wide[0])), C.uint(s.period))
+		writeElapsed := time.Since(writeStart)
+		if writeElapsed > maxWrite {
+			maxWrite = writeElapsed
+		}
+
+		if time.Since(lastReport) > 2*time.Second {
+			var cpuPct float64
+			if selfTicks, err := selfCPUTicks(); err == nil {
+				if sysTicks, err := systemCPUTicks(); err == nil && sysTicks > lastSysTicks {
+					cpuPct = float64(selfTicks-lastSelfTicks) / float64(sysTicks-lastSysTicks) * 100
+					lastSelfTicks, lastSysTicks = selfTicks, sysTicks
+				}
+			}
+			diag.setCPU(cpuPct)
+
+			voicesBuf := make([]byte, 16)
+			key := C.CString("active_voices")
+			if n := C.bridge_plugin_get_param(plugin, key, (*C.char)(unsafe.Pointer(&voicesBuf[0])), C.int(len(voicesBuf))); n >= 0 {
+				if v, err := strconv.Atoi(string(voicesBuf[:n])); err == nil {
+					diag.setVoices(v)
+				}
+			}
+			C.free(unsafe.Pointer(key))
+
+			log.Printf("progress: blocks=%d slow=%d maxPre=%v maxWrite=%v cpu=%.1f%% voices=%d",
+				blocks, slowBlocks, maxPre, maxWrite, cpuPct, diag.getVoices())
+			maxPre, maxWrite = 0, 0
+			lastReport = time.Now()
+		}
+
+		if int(written) < 0 {
+			xrunRetries++
+			log.Printf("bridge_pcm_writei error (retry #%d): rc=%d", xrunRetries, written)
+			continue
+		}
+		blocks++
+	}
+}
+
+// doTransport taps the named panel transport button (a quick press+release,
+// same as any other panel_button call — see mm_plugin.cpp's tapControl)
+// and updates seq's own optimistic playing/recording shadow. Shared by
+// the SEQ page's bottom-screen buttons and the web UI's transport
+// controls (ctlTransport). action is "play", "stop", or "record"; unknown
+// values are a no-op.
+func doTransport(plugin *C.bridge_plugin_t, seq *seqState, action string) {
+	switch action {
+	case "play":
+		cSetParam(plugin, "panel_button", "Play,down")
+		cSetParam(plugin, "panel_button", "Play,up")
+		_, rec := seq.Transport()
+		seq.SetTransport(true, rec)
+	case "stop":
+		cSetParam(plugin, "panel_button", "Stop,down")
+		cSetParam(plugin, "panel_button", "Stop,up")
+		_, rec := seq.Transport()
+		seq.SetTransport(false, rec)
+	case "record":
+		cSetParam(plugin, "panel_button", "Record,down")
+		cSetParam(plugin, "panel_button", "Record,up")
+		playing, rec := seq.Transport()
+		seq.SetTransport(playing, !rec)
+	}
+}
+
+func sign(v int) int {
+	if v < 0 {
+		return -1
+	}
+	if v > 0 {
+		return 1
+	}
+	return 0
+}
+
+func errBridge(what string) error {
+	return &bridgeError{what: what, msg: C.GoString(C.bridge_last_error())}
+}
+
+type bridgeError struct {
+	what string
+	msg  string
+}
+
+func (e *bridgeError) Error() string { return e.what + ": " + e.msg }
+
+type audioStatus struct {
+	mu    sync.Mutex
+	ready bool
+	msg   string
+}
+
+func (s *audioStatus) set(ready bool, msg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ready, s.msg = ready, msg
+}
+
+func (s *audioStatus) get() (ready bool, msg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ready, s.msg
+}
+
+const msgWaitingForCard = "Loopback Audio driver not loaded.\nInstall/enable push-audio-loopback."
+const msgWaitingForLive = "1. Go to Push Audio Settings.\n" +
+	"2. Select Devices.\n" +
+	"3. Enable one input on \"Push Hack Virtual Audio PCM\".\n" +
+	"4. Select an audio track.\n" +
+	"5. Set the track's input to the input you enabled in Devices.\n" +
+	"6. Turn on Monitor In."
+
+// watchHWParams is the top-level audio supervisor — identical shape to
+// push-hack-xenia's own, plus threading seq through to startAudioSession.
+func watchHWParams(cardID string, rt *sharedConfig, plugin *C.bridge_plugin_t,
+	midiCh <-chan [3]byte, ctlCh <-chan controlEvent, params *paramState, io *ioState,
+	status *audioStatus, seq *seqState, level *levelMeter, diag *diagStats, shutdown <-chan struct{}) {
+
+	var sess *audioSession
+	var lastParams hwparams.Params
+	var lastDevice string
+	haveSess := false
+	lastState := ""
+
+	logTransition := func(state string) {
+		if lastState == state {
+			return
+		}
+		lastState = state
+		log.Print(state)
+	}
+
+	stopSession := func() {
+		if haveSess {
+			sess.stop()
+			sess = nil
+			haveSess = false
+		}
+	}
+	defer stopSession()
+
+	for {
+		select {
+		case <-shutdown:
+			return
+		default:
+		}
+
+		if !cardPresent(cardID) {
+			logTransition("waiting for " + cardID + " (push-audio-loopback not loaded yet)")
+			status.set(false, msgWaitingForCard)
+			stopSession()
+			if !sleepOrStop(waitPollInterval, shutdown) {
+				return
+			}
+			continue
+		}
+
+		hp, ok, err := hwparams.Read(cardID)
+		if err != nil {
+			log.Printf("reading hw_params for %s: %v", cardID, err)
+			status.set(false, msgWaitingForLive)
+			stopSession()
+			if !sleepOrStop(waitPollInterval, shutdown) {
+				return
+			}
+			continue
+		}
+		if !ok {
+			logTransition("waiting for Live to open " + cardID + "...")
+			status.set(false, msgWaitingForLive)
+			stopSession()
+			if !sleepOrStop(waitPollInterval, shutdown) {
+				return
+			}
+			continue
+		}
+
+		device := rt.getPCM()
+		if !haveSess || hp != lastParams || device != lastDevice {
+			stopSession()
+			newSess, err := startAudioSession(plugin, device, hp, midiCh, ctlCh, params, io, seq, rt, level, diag)
+			if err != nil {
+				log.Printf("opening PCM %s: %v — will retry", device, err)
+				status.set(false, msgWaitingForLive)
+				if !sleepOrStop(waitPollInterval, shutdown) {
+					return
+				}
+				continue
+			}
+			sess = newSess
+			haveSess = true
+			lastParams = hp
+			lastDevice = device
+			logTransition("running")
+			status.set(true, "")
+		}
+
+		if !sleepOrStop(steadyPollInterval, shutdown) {
+			return
+		}
+	}
+}
+
+func sleepOrStop(d time.Duration, shutdown <-chan struct{}) bool {
+	select {
+	case <-time.After(d):
+		return true
+	case <-shutdown:
+		return false
+	}
+}

@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monomachine</title>
+<style>
+  /*
+   * Palette matches the Push screen's own Elektron-inspired theme
+   * (src/display.go's mmTheme/mmChassis/mmGreen/mmRed/mmAmber) so this
+   * page reads as the same instrument, not a generic web skin.
+   */
+  :root {
+    --chassis: #141416; /* mmChassis */
+    --panel:   #1c1c1f;
+    --track:   #2c2c30; /* mmTrack */
+    --ink:     #d8d8d0; /* mmInk */
+    --green:   #3ce064; /* mmGreen */
+    --red:     #e83c3c; /* mmRed */
+    --amber:   #ffb030; /* mmAmber */
+    --dim:     #6a6a70;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--chassis);
+    color: var(--ink);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  header {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    border-bottom: 2px solid var(--track);
+  }
+  header h1 {
+    font-size: 15px;
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--amber);
+  }
+  #status {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: var(--track);
+  }
+  #status.ready { background: var(--green); color: #05170a; }
+  #status.notready { background: var(--red); color: #1a0505; }
+  #diag { font-size: 11px; color: var(--dim); }
+
+  #track-picker { display: flex; gap: 4px; margin-left: auto; }
+  .track-btn {
+    appearance: none; border: none; border-radius: 3px;
+    width: 30px; height: 30px; font-weight: 700; font-size: 12px;
+    background: var(--track); color: var(--ink); cursor: pointer;
+  }
+  .track-btn.active { background: var(--amber); color: #201400; }
+
+  main { max-width: 820px; margin: 0 auto; padding: 0 0 40px; }
+
+  #tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 10px 16px 0; }
+  .tab {
+    appearance: none; border: none; padding: 8px 12px; font: inherit;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+    text-transform: uppercase; background: var(--track); color: var(--ink);
+    cursor: pointer; border-radius: 3px 3px 0 0;
+  }
+  .tab.active { background: var(--amber); color: #201400; }
+
+  .page { display: none; padding: 16px; }
+  .page.active { display: block; }
+
+  .row {
+    display: grid; grid-template-columns: 150px 1fr 56px;
+    align-items: center; gap: 12px; padding: 9px 0;
+    border-bottom: 1px solid var(--track);
+  }
+  .row:last-child { border-bottom: none; }
+  .row label {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .row .val { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  input[type=range] { width: 100%; accent-color: var(--amber); }
+  .row.accent-filter input[type=range] { accent-color: var(--green); }
+  .row.accent-lfo input[type=range] { accent-color: var(--amber); }
+
+  /* -- SEQ page ------------------------------------------------------- */
+  #seq-page { padding: 16px; display: none; }
+  #seq-page.active { display: block; }
+  #seq-transport { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+  .xport-btn {
+    appearance: none; border: none; border-radius: 4px; padding: 8px 14px;
+    font-weight: 700; font-size: 12px; text-transform: uppercase;
+    background: var(--track); color: var(--ink); cursor: pointer;
+  }
+  .xport-btn.on.play { background: var(--green); color: #05170a; }
+  .xport-btn.on.record { background: var(--red); color: #1a0505; }
+  #seq-page-toggle { margin-left: auto; }
+
+  .seq-grid { display: flex; flex-direction: column; gap: 3px; }
+  .seq-row { display: grid; grid-template-columns: 44px repeat(8, 1fr) 34px; gap: 3px; align-items: center; }
+  .seq-row .track-label { font-size: 11px; font-weight: 700; color: var(--dim); }
+  .seq-row.current .track-label { color: var(--amber); }
+  .seq-step {
+    appearance: none; border: none; border-radius: 3px; height: 32px;
+    background: var(--track); cursor: pointer;
+  }
+  .seq-step.on { background: var(--green); }
+  .seq-step.on.red { background: var(--red); }
+  .seq-step.on.yellow { background: var(--amber); }
+  .mute-btn {
+    appearance: none; border: none; border-radius: 3px; height: 26px;
+    background: var(--track); color: var(--ink); font-size: 10px; font-weight: 700; cursor: pointer;
+  }
+  .mute-btn.on { background: var(--red); color: #1a0505; }
+
+  #lcd-wrap { margin-top: 16px; text-align: center; }
+  #lcd {
+    background: #0a1a0e; border-radius: 4px; image-rendering: pixelated;
+    width: 384px; height: 192px; border: 2px solid var(--track);
+  }
+  #lcd-caption { font-size: 10px; color: var(--dim); margin-top: 4px; }
+
+  /* -- I/O / SETTINGS -------------------------------------------------- */
+  #io {
+    background: var(--panel); color: var(--ink); margin: 16px 16px 0;
+    border-radius: 4px; padding: 14px 16px;
+  }
+  #io h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 10px; opacity: 0.7; }
+  .io-row { display: grid; grid-template-columns: 110px 1fr; gap: 10px; align-items: center; padding: 6px 0; }
+  .io-row label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  select.io, select.enum {
+    width: 100%; background: #0e0e10; color: var(--amber); border: 1px solid var(--track);
+    border-radius: 4px; padding: 6px 8px; font-weight: 700; font-size: 12px;
+  }
+  select.io:focus, select.enum:focus { outline: 2px solid var(--amber); }
+  #version { position: fixed; right: 6px; bottom: 4px; font-size: 10px; color: #444; pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Monomachine</h1>
+  <span id="status">connecting…</span>
+  <span id="diag" title="CPU% of one core, active voice count">—</span>
+  <div id="track-picker"></div>
+</header>
+<main>
+  <nav id="tabs"></nav>
+  <div id="pages"></div>
+
+  <div id="seq-page">
+    <div id="seq-transport">
+      <button class="xport-btn play" id="btn-play">Play</button>
+      <button class="xport-btn" id="btn-stop">Stop</button>
+      <button class="xport-btn record" id="btn-record">Rec</button>
+      <button class="xport-btn" id="seq-page-toggle">Steps 1-8</button>
+    </div>
+    <div class="seq-grid" id="seq-grid"></div>
+    <div class="seq-row" style="grid-template-columns: 44px repeat(8,1fr) 34px; margin-top:6px;">
+      <span class="track-label">MUTE</span>
+      <div id="mute-row" style="display:contents"></div>
+      <span></span>
+    </div>
+    <div id="lcd-wrap">
+      <canvas id="lcd" width="128" height="64"></canvas>
+      <div id="lcd-caption">Emulated Monomachine LCD (selected track)</div>
+    </div>
+  </div>
+
+  <section id="io">
+    <h2>Settings</h2>
+    <div class="io-row"><label>MIDI IN</label><select class="io" id="io-midi"></select></div>
+    <div class="io-row"><label>Audio Out</label><select class="io" id="io-pcm"></select></div>
+    <div class="io-row"><label>Channel</label><select class="io" id="io-channel"></select></div>
+    <div class="io-row"><label>MIDI Channel</label><select class="io" id="io-recv-channel"></select></div>
+  </section>
+</main>
+<span id="version"></span>
+<script>
+"use strict";
+
+// -- param pages (mirrors params.go's webParamPages) --------------------
+let metas = {};
+let pages = [];
+let activeTab = 0; // 0..pages.length-1 = param pages, pages.length = SEQ
+const touching = new Set();
+
+function accentClass(key) {
+  if (key.startsWith("filter_")) return "accent-filter";
+  if (key.startsWith("fx_") || key.startsWith("lfo")) return "accent-lfo";
+  return "";
+}
+
+function buildParamRow(meta) {
+  const row = document.createElement("div");
+  row.className = "row " + accentClass(meta.key);
+  row.dataset.key = meta.key;
+
+  const label = document.createElement("label");
+  label.textContent = meta.name || meta.key;
+  row.appendChild(label);
+
+  let control;
+  if (meta.key === "mute") {
+    control = document.createElement("select");
+    control.className = "enum";
+    ["Off", "Mute"].forEach((opt, i) => {
+      const o = document.createElement("option");
+      o.value = i;
+      o.textContent = opt;
+      control.appendChild(o);
+    });
+    control.addEventListener("focus", () => touching.add(meta.key));
+    control.addEventListener("blur", () => touching.delete(meta.key));
+    control.addEventListener("change", () => setParam(meta.key, Number(control.value)));
+  } else {
+    control = document.createElement("input");
+    control.type = "range";
+    control.min = meta.min;
+    control.max = meta.max;
+    control.step = 1;
+    control.addEventListener("pointerdown", () => touching.add(meta.key));
+    control.addEventListener("pointerup", () => touching.delete(meta.key));
+    control.addEventListener("input", () => {
+      setParam(meta.key, Number(control.value));
+      row.querySelector(".val").textContent = control.value;
+    });
+  }
+  control.className += " control";
+  row.appendChild(control);
+
+  const val = document.createElement("span");
+  val.className = "val";
+  row.appendChild(val);
+  return row;
+}
+
+function buildTabs() {
+  const tabs = document.getElementById("tabs");
+  const pagesEl = document.getElementById("pages");
+  tabs.innerHTML = "";
+  pagesEl.innerHTML = "";
+
+  pages.forEach((page, i) => {
+    const tab = document.createElement("button");
+    tab.className = "tab" + (i === activeTab ? " active" : "");
+    tab.textContent = page.name;
+    tab.addEventListener("click", () => selectTab(i));
+    tabs.appendChild(tab);
+
+    const pageEl = document.createElement("div");
+    pageEl.className = "page" + (i === activeTab ? " active" : "");
+    page.keys.forEach((key) => {
+      const meta = metas[key];
+      if (meta) pageEl.appendChild(buildParamRow(meta));
+    });
+    pagesEl.appendChild(pageEl);
+  });
+
+  const seqTab = document.createElement("button");
+  seqTab.className = "tab" + (activeTab === pages.length ? " active" : "");
+  seqTab.textContent = "Seq";
+  seqTab.addEventListener("click", () => selectTab(pages.length));
+  tabs.appendChild(seqTab);
+}
+
+function selectTab(i) {
+  activeTab = i;
+  document.querySelectorAll("#tabs .tab").forEach((t, ti) => t.classList.toggle("active", ti === i));
+  document.querySelectorAll("#pages .page").forEach((p, pi) => p.classList.toggle("active", pi === i));
+  document.getElementById("seq-page").classList.toggle("active", i === pages.length);
+}
+
+function applyParamValue(key, snap) {
+  if (touching.has(key)) return;
+  const row = document.querySelector(`.row[data-key="${CSS.escape(key)}"]`);
+  if (!row) return;
+  const control = row.querySelector(".control");
+  if (document.activeElement === control) return;
+  if (control.tagName === "SELECT") {
+    control.value = Math.round(snap.value);
+  } else {
+    control.value = snap.value;
+  }
+  row.querySelector(".val").textContent = snap.display;
+}
+
+async function setParam(key, value) {
+  try {
+    await fetch(`/api/params/${encodeURIComponent(key)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
+  } catch (e) { console.error("setParam failed", key, e); }
+}
+
+// -- track picker ---------------------------------------------------------
+let trackButtonsBuilt = false;
+function buildTrackButtons() {
+  const wrap = document.getElementById("track-picker");
+  wrap.innerHTML = "";
+  for (let t = 0; t < 6; t++) {
+    const b = document.createElement("button");
+    b.className = "track-btn";
+    b.textContent = "T" + (t + 1);
+    b.addEventListener("click", () => setTrack(t));
+    wrap.appendChild(b);
+  }
+  trackButtonsBuilt = true;
+}
+
+async function setTrack(t) {
+  try {
+    await fetch("/api/track", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track: t }),
+    });
+  } catch (e) { console.error("setTrack failed", e); }
+}
+
+function applyTrack(track) {
+  if (!trackButtonsBuilt) buildTrackButtons();
+  document.querySelectorAll(".track-btn").forEach((b, i) => b.classList.toggle("active", i === track));
+  document.querySelectorAll(".seq-row").forEach((r) => {
+    r.classList.toggle("current", Number(r.dataset.track) === track);
+  });
+}
+
+// -- SEQ grid ---------------------------------------------------------
+let seqGridBuilt = false;
+function buildSeqGrid() {
+  const grid = document.getElementById("seq-grid");
+  const muteRow = document.getElementById("mute-row");
+  grid.innerHTML = "";
+  muteRow.innerHTML = "";
+  for (let t = 0; t < 6; t++) {
+    const row = document.createElement("div");
+    row.className = "seq-row";
+    row.dataset.track = t;
+    const label = document.createElement("span");
+    label.className = "track-label";
+    label.textContent = "T" + (t + 1);
+    row.appendChild(label);
+    for (let c = 0; c < 8; c++) {
+      const btn = document.createElement("button");
+      btn.className = "seq-step";
+      btn.dataset.track = t;
+      btn.dataset.col = c;
+      btn.addEventListener("click", () => toggleStep(t, Number(btn.dataset.step)));
+      row.appendChild(btn);
+    }
+    const spacer = document.createElement("span");
+    row.appendChild(spacer);
+    grid.appendChild(row);
+
+    const mute = document.createElement("button");
+    mute.className = "mute-btn";
+    mute.textContent = "T" + (t + 1);
+    mute.addEventListener("click", () => toggleMute(t));
+    mute.dataset.track = t;
+    muteRow.appendChild(mute);
+  }
+  seqGridBuilt = true;
+
+  document.getElementById("btn-play").addEventListener("click", () => transport("play"));
+  document.getElementById("btn-stop").addEventListener("click", () => transport("stop"));
+  document.getElementById("btn-record").addEventListener("click", () => transport("record"));
+  document.getElementById("seq-page-toggle").addEventListener("click", () => {
+    const cur = Number(document.getElementById("seq-page-toggle").dataset.page || 0);
+    setSeqPage(cur === 0 ? 1 : 0);
+  });
+}
+
+async function toggleStep(track, step) {
+  try {
+    await fetch("/api/seq/step", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track, step }),
+    });
+  } catch (e) { console.error("toggleStep failed", e); }
+}
+
+async function toggleMute(track) {
+  try {
+    await fetch("/api/seq/mute", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track }),
+    });
+  } catch (e) { console.error("toggleMute failed", e); }
+}
+
+async function setSeqPage(page) {
+  try {
+    await fetch("/api/seq/page", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page }),
+    });
+  } catch (e) { console.error("setSeqPage failed", e); }
+}
+
+async function transport(action) {
+  try {
+    await fetch("/api/transport", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+  } catch (e) { console.error("transport failed", e); }
+}
+
+function applySeq(seq, track) {
+  if (!seqGridBuilt) buildSeqGrid();
+  const offset = (seq.stepPage || 0) * 8;
+  document.querySelectorAll(".seq-step").forEach((btn) => {
+    const t = Number(btn.dataset.track);
+    const step = offset + Number(btn.dataset.col);
+    btn.dataset.step = step;
+    const on = !!(seq.steps && seq.steps[t] && seq.steps[t][step]);
+    btn.classList.toggle("on", on);
+    btn.classList.remove("red", "yellow");
+  });
+  document.querySelectorAll(".mute-btn").forEach((btn) => {
+    const t = Number(btn.dataset.track);
+    btn.classList.toggle("on", !!(seq.mutes && seq.mutes[t]));
+  });
+  document.getElementById("btn-play").classList.toggle("on", !!seq.playing);
+  document.getElementById("btn-record").classList.toggle("on", !!seq.recording);
+  const pageBtn = document.getElementById("seq-page-toggle");
+  pageBtn.dataset.page = seq.stepPage || 0;
+  pageBtn.textContent = (seq.stepPage || 0) === 0 ? "Steps 1-8" : "Steps 9-16";
+
+  // Overlay the currently-selected track's row with the plugin's own
+  // live step-LED colors (playhead flashing during playback) — see
+  // params.go/panelstate.go's doc on why only the selected track has a
+  // hardware-truthful readback.
+  const panel = window.__lastPanel;
+  if (panel && panel.track === track && Array.isArray(panel.steps)) {
+    document.querySelectorAll(`.seq-step[data-track="${track}"]`).forEach((btn) => {
+      const step = Number(btn.dataset.step);
+      const color = panel.steps[step];
+      if (color === 1) { btn.classList.add("on"); }
+      else if (color === 2) { btn.classList.add("on", "red"); }
+      else if (color === 3) { btn.classList.add("on", "yellow"); }
+    });
+  }
+}
+
+// -- LCD visualizer -----------------------------------------------------
+function drawLCD(base64) {
+  if (!base64) return;
+  const canvas = document.getElementById("lcd");
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(128, 64);
+  let bytes;
+  try {
+    bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  } catch (e) { return; }
+  for (let y = 0; y < 64; y++) {
+    for (let x = 0; x < 128; x++) {
+      const bitIdx = y * 128 + x;
+      const byte = bytes[bitIdx >> 3] || 0;
+      const lit = (byte & (0x80 >> (bitIdx % 8))) !== 0;
+      const p = (y * 128 + x) * 4;
+      if (lit) {
+        img.data[p] = 0x9a; img.data[p + 1] = 0xff; img.data[p + 2] = 0xb0; img.data[p + 3] = 255;
+      } else {
+        img.data[p] = 0x0a; img.data[p + 1] = 0x1a; img.data[p + 2] = 0x0e; img.data[p + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// -- I/O ------------------------------------------------------------------
+function ioOptionsKey(options) { return options.map((o) => o.label + (o.current ? "*" : "")).join("\n"); }
+const ioSelectState = {};
+function buildIOSelect(id, options) {
+  const el = document.getElementById(id);
+  const key = ioOptionsKey(options);
+  if (ioSelectState[id] === key) return;
+  if (touching.has(id)) return;
+  ioSelectState[id] = key;
+  el.innerHTML = "";
+  options.forEach((opt, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = opt.label;
+    if (opt.current) o.selected = true;
+    el.appendChild(o);
+  });
+}
+async function setIO(kind, index) {
+  try {
+    await fetch(`/api/io/${kind}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index }),
+    });
+  } catch (e) { console.error("setIO failed", kind, e); }
+}
+let ioWired = false;
+function applyIO(io) {
+  buildIOSelect("io-midi", io.midi || []);
+  buildIOSelect("io-pcm", io.device || []);
+  buildIOSelect("io-channel", io.channel || []);
+  buildIOSelect("io-recv-channel", io.recvChannel || []);
+  if (!ioWired) {
+    for (const [id, kind] of [["io-midi", "midi"], ["io-pcm", "pcm"], ["io-channel", "channel"], ["io-recv-channel", "recv-channel"]]) {
+      const el = document.getElementById(id);
+      el.addEventListener("focus", () => touching.add(id));
+      el.addEventListener("blur", () => { touching.delete(id); ioSelectState[id] = null; });
+      el.addEventListener("change", (e) => setIO(kind, Number(e.target.value)));
+    }
+    ioWired = true;
+  }
+}
+
+function applyAudioStatus(audio) {
+  const el = document.getElementById("status");
+  el.className = audio.ready ? "ready" : "notready";
+  el.textContent = audio.ready ? "Running" : (audio.message || "Not ready").split("\n")[0];
+}
+
+function applyDiag(diag) {
+  const el = document.getElementById("diag");
+  const cpu = typeof diag.cpuPercent === "number" ? diag.cpuPercent.toFixed(1) : "?";
+  const voices = typeof diag.activeVoices === "number" ? diag.activeVoices : "?";
+  el.textContent = `CPU ${cpu}% · voices ${voices}`;
+}
+
+let pagesBuilt = false;
+function applyState(state) {
+  if (!pagesBuilt && pages.length) {
+    buildTabs();
+    pagesBuilt = true;
+  }
+  for (const [key, snap] of Object.entries(state.params || {})) {
+    applyParamValue(key, snap);
+  }
+  applyTrack(state.track || 0);
+  window.__lastPanel = state.panel || null;
+  applySeq(state.seq || {}, state.track || 0);
+  if (state.panel && state.panel.lcd) drawLCD(state.panel.lcd);
+  applyIO(state.io || {});
+  applyAudioStatus(state.audio || {});
+  applyDiag(state.diag || {});
+  document.getElementById("version").textContent = state.version ? `v${state.version}` : "";
+}
+
+async function init() {
+  const data = await (await fetch("/api/params")).json();
+  metas = Object.fromEntries((data.params || []).map((m) => [m.key, m]));
+  pages = data.pages || [];
+
+  const es = new EventSource("/sse/state");
+  es.onmessage = (ev) => applyState(JSON.parse(ev.data));
+  es.onerror = () => {
+    document.getElementById("status").className = "notready";
+    document.getElementById("status").textContent = "Disconnected — retrying…";
+  };
+}
+
+init();
+</script>
+</body>
+</html>
