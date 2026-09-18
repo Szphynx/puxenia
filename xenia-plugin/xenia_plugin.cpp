@@ -134,20 +134,20 @@ namespace
 		{"program",            "Program",             0, 127, kProgramSentinel, 0},
 		{"cutoff",              "Filter 1 Cutoff",     0, 127, 50, 100},
 		{"resonance",           "Filter 1 Resonance",  0, 127, 56, 0},
-		{"filter_type",         "Filter 1 Type",       0, 9,   54, 0},
+		{"filter_type",         "Filter 1 Type",       0, 12,  54, 0},
 		{"filter_keytrack",     "Filter 1 Keytrack",   0, 127, 51, 64},
 		{"filter_env_amount",   "Filter 1 Env Amount", 0, 127, 52, 64},
 		{"filter_env_velocity", "Filter 1 Env Velo",   0, 127, 53, 64},
 		{"filter2_cutoff",      "Filter 2 Cutoff",     0, 127, 60, 100},
 		// -- OSC page --
-		{"osc1_octave",   "Osc 1 Octave",   0, 8,   33, 4},
-		{"osc1_semitone", "Osc 1 Semitone", 0, 24,  34, 12},
-		{"osc1_detune",   "Osc 1 Detune",   0, 127, 35, 64},
-		{"osc1_wave",     "Wave 1 Start",   0, 63,  71, 0},
-		{"osc2_octave",   "Osc 2 Octave",   0, 8,   38, 4},
-		{"osc2_semitone", "Osc 2 Semitone", 0, 24,  39, 12},
-		{"osc2_detune",   "Osc 2 Detune",   0, 127, 40, 64},
-		{"osc2_wave",     "Wave 2 Start",   0, 63,  77, 0},
+		{"osc1_octave",   "Osc 1 Octave",   16, 112, 33, 64},
+		{"osc1_semitone", "Osc 1 Semitone", 52, 76,  34, 64},
+		{"osc1_detune",   "Osc 1 Detune",   0,  127, 35, 64},
+		{"osc1_wave",     "Wave 1 Start",   0,  63,  71, 0},
+		{"osc2_octave",   "Osc 2 Octave",   16, 112, 38, 64},
+		{"osc2_semitone", "Osc 2 Semitone", 52, 76,  39, 64},
+		{"osc2_detune",   "Osc 2 Detune",   0,  127, 40, 64},
+		{"osc2_wave",     "Wave 2 Start",   0,  63,  77, 0},
 		// -- MIXER page --
 		{"wave1_level",  "Wave 1 Level", 0, 127, 45, 100},
 		{"wave2_level",  "Wave 2 Level", 0, 127, 46, 0},
@@ -336,29 +336,38 @@ namespace
 		inst->device->sendMidiEvent(ev);
 	}
 
-	// kSysexParams: params confirmed against the real SDATA index table
-	// (from the device's own service documentation, "3. Data Formats /
-	// 3.1 SDATA - Sound Data") to need sendSingleParamChange instead of a
-	// plain CC -- see sendSingleParamChange's doc above for why. Deliberately
-	// small and conservative: only keys whose index has actually been read
-	// off that table are listed here. Every other kParams entry not in
-	// this list, and not Program Change, still goes out as a plain CC via
-	// kParams' own outCC field -- correct for the 7 keys that really are
-	// hardwired CCs per the MIDI Implementation Chart (mod_wheel=1,
-	// channel_volume=7, panning=10, sustain=64, glide_time=5), but very
-	// likely ALSO wrong (silently inert, same symptom this fixes for the
-	// filter) for the remaining kParams entries whose CC numbers came from
-	// a misread of the same source document -- those still need their own
-	// SDATA index looked up and added here before they'll audibly work.
+	// kSysexParams: every kParams key that needs sendSingleParamChange
+	// instead of a plain CC -- see sendSingleParamChange's doc above for
+	// why, and docs/xenia-gearmulator-notes.md for how these indices were
+	// obtained (gearmulator's own reference JUCE plugin's
+	// parameterDescriptions_xt.json, not the PDF chart -- ground truth,
+	// covers every single-mode parameter). The only kParams keys
+	// deliberately NOT here are the 5 confirmed-hardwired CCs per the
+	// real MIDI Implementation Chart -- mod_wheel(CC1), channel_volume
+	// (CC7), panning(CC10), sustain(CC64), glide_time(CC5) -- which stay
+	// on the plain-CC path because they already work.
 	struct SysexParamDef { const char *key; uint8_t sdataIndex; };
 	constexpr SysexParamDef kSysexParams[] = {
-		{"cutoff",              62},
-		{"resonance",           63},
-		{"filter_type",         64},
-		{"filter_keytrack",     65},
-		{"filter_env_amount",   66},
-		{"filter_env_velocity", 67},
-		{"filter2_cutoff",      73},
+		{"cutoff", 62}, {"resonance", 63}, {"filter_type", 64}, {"filter_keytrack", 65},
+		{"filter_env_amount", 66}, {"filter_env_velocity", 67}, {"filter2_cutoff", 73},
+		{"osc1_octave", 1}, {"osc1_semitone", 2}, {"osc1_detune", 3}, {"osc1_wave", 26},
+		{"osc2_octave", 12}, {"osc2_semitone", 13}, {"osc2_detune", 14}, {"osc2_wave", 36},
+		{"wave1_level", 47}, {"wave2_level", 48}, {"ringmod_level", 49}, {"noise_level", 50},
+		{"osc2_sync", 16}, {"osc2_link", 19}, {"fm_amount", 7}, {"wavetable", 25},
+		{"f_attack", 113}, {"f_decay", 114}, {"f_sustain", 115}, {"f_release", 116}, {"f_trigger", 117},
+		{"a_attack", 119}, {"a_decay", 120}, {"a_sustain", 121}, {"a_release", 122}, {"a_trigger", 123},
+		{"a_velocity", 79}, {"amp_volume", 77}, {"amp_keytrack", 80},
+		{"lfo1_rate", 159}, {"lfo1_shape", 160}, {"lfo1_delay", 161}, {"lfo1_sync", 162},
+		{"lfo1_symmetry", 163}, {"lfo1_humanize", 164},
+		{"lfo2_rate", 166}, {"lfo2_shape", 167}, {"lfo2_delay", 168}, {"lfo2_sync", 169},
+		{"lfo2_symmetry", 170}, {"lfo2_humanize", 171}, {"lfo2_phase", 172},
+		{"chorus", 82}, {"glide_type", 88}, {"glide_mode", 89},
+		{"fe_time1", 149}, {"fe_level1", 150}, {"fe_time2", 151}, {"fe_level2", 152},
+		{"fe_time3", 153}, {"fe_level3", 154}, {"fe_rel_time", 155}, {"fe_rel_level", 156},
+		{"arp_active", 92}, {"arp_range", 95}, {"arp_clock", 94}, {"arp_tempo", 93},
+		{"arp_direction", 97}, {"arp_pattern", 96}, {"arp_note_order", 98}, {"arp_pattern_length", 101},
+		{"wave1_phase", 27}, {"wave1_env_amt", 28}, {"wave1_env_vel", 29}, {"wave1_keytrack", 30},
+		{"wave2_phase", 37}, {"wave2_env_amt", 38}, {"wave2_env_vel", 39}, {"wave2_keytrack", 40},
 	};
 	const SysexParamDef *findSysexParam(const char *key)
 	{

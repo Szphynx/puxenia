@@ -5,6 +5,19 @@ reading `gearmulator`'s source directly
 (`charlesvestal/gearmulator/source/waldi/xt/xtLib`) and by offline testing,
 not duplicated from that repo's own code comments.
 
+> **Read this first if you're about to send a SysEx message to this
+> device.** `gearmulator` ships a real, working reference implementation
+> at `source/waldi/xt/xtJucePlugin/` — a full JUCE plugin with a working
+> parameter editor. Its packet layouts, in
+> `xtJucePlugin/parameterDescriptions_xt.json`'s `"midipackets"` section,
+> are literal byte-by-byte templates and are ground truth. Reconstructing
+> a SysEx message's byte layout from `xtLib`'s C++ parsing code alone
+> (`xtState.cpp`, `xtMidiTypes.h`) is how a real, shipped bug got
+> introduced in this project (see "The real answer" section below) — the
+> generic index-parsing helper there is shared infrastructure that looks
+> like it implies one byte layout when the actual packet template uses a
+> different one. Check the JSON template first, always.
+
 ## This is a full firmware emulator, not a reimplementation
 
 `xtLib` runs the **actual Microwave XT firmware binary** (ROM images:
@@ -193,34 +206,53 @@ confirmed by testing all of those independently and getting the same
 flat result every time (see "Everything already ruled out" below).
 
 The actual mechanism for real-time parameter edits is a separate SysEx
-command, confirmed directly against `xtMidiTypes.h`/`xtState.cpp`:
+command. Don't reverse-engineer its byte layout from `xtMidiTypes.h`/
+`xtState.cpp` alone (that was tried, got the field count wrong, and
+cost real debugging time) — **gearmulator ships a real, working
+reference implementation**, a full JUCE plugin with a working editor
+GUI, at `source/waldi/xt/xtJucePlugin/`. Its packet layouts are
+authoritative, ground truth, data-driven, and trivial to read:
 
+- **Reference source**: `xtJucePlugin/parameterDescriptions_xt.json`,
+  the `"midipackets"` object, `"singleparameterchange"` entry — a literal
+  byte-by-byte packet template. Cross-check against
+  `xtController.cpp`'s `Controller::sendParameterChange()`, which shows
+  what value each named field actually gets at send time.
 - **Command**: `SysexCommand::SingleParameterChange = 0x20` (`xtMidiTypes.h`)
-- **Wire format**: `F0 3E 0E DEV 20h LOC IH IL XX F7`
+- **Real wire format** (confirmed from the JSON, not guessed):
+  `F0 3E 0E DEV 20h PART PAGE IDX XX F7` — **four single-byte fields**,
+  not a "location byte + 2-byte split index" the way `xtState.cpp`'s
+  generic `getParameter()` helper alone would suggest (that helper's
+  `idxParamIndexH`/`idxParamIndexL` machinery is generic infrastructure
+  shared with Multi/Global param changes that use a real 2-byte index;
+  Single's own packet just happens to route both of those "index" slots
+  to two *different*, separately-meaningful fields, PART and PAGE, with
+  the actual parameter index as its own separate single byte after
+  them — a distinction not obvious from `xtState.cpp` in isolation).
   - `DEV` — device ID; `0x7F` (`wLib::IdDeviceOmni`) is a real, defined
     broadcast constant, not a guess.
-  - `LOC` — the byte right after the command. For the two "live edit
-    buffer" location enum values (`SingleEditBufferSingleMode` in Single
-    mode, `SingleEditBufferMultiMode` in Multi mode — `xt::State`
-    chooses between them itself based on `isMultiMode()`, **not** from
-    this byte), the byte's actual value only matters in Multi mode (it's
-    an index into `m_currentMultiSingles`, and an out-of-range value gets
-    silently rejected — `getSingle()` returns `nullptr`). **Use `0x00`**,
-    valid in both modes; a "clever" nonzero value like the raw
-    `SingleEditBufferSingleMode` enum constant (`0x20`) can be
-    out-of-bounds in Multi mode and cause a silent, undebuggable no-op
-    (this cost real time before the byte layout was read closely enough
-    to catch it).
-  - `IH`/`IL` — the SDATA parameter index (see the table below), split
-    14-bit: `index = (IH << 7) | IL`. For every index in this project's
-    range (0-127ish) `IH` is always `0`.
+  - `PART` — `0x00` for a Single (non-Multi) parameter. In the reference
+    plugin, `Parameter::getPart()` is what fills this, and it's 0 outside
+    Multi mode. **This field was the actual bug**: an earlier version of
+    this code guessed `0x20` here (misreading it as a "location" byte,
+    and even then guessing wrong) — a real, shipped, hardware-tested bug,
+    not just a theory; the wrong value silently made every Single
+    Parameter Change a no-op.
+  - `PAGE` — the parameterdescriptions JSON's own `"page"` field for that
+    parameter, defaulting to `0`; confirmed `0` for every filter-section
+    entry actually used (e.g. `F1Cutoff`'s JSON entry has no `"page"`
+    override).
+  - `IDX` — the SDATA table's "Index" column (e.g. `62` for Filter 1
+    Cutoff), a single byte — **not** split across two bytes.
   - `XX` — the raw parameter byte, same range/meaning as the SDATA
     table's "Range" column.
   - No checksum — `modifySingle()` writes `*p = _data[IdxSingleParamValue]`
     with no checksum check at all, unlike a full dump.
 - **Implemented**: `xenia_plugin.cpp`'s `sendSingleParamChange()` +
   `kSysexParams` (currently only the filter section — see that file's own
-  comments for exactly which keys and why only those).
+  comments for exactly which keys and why only those). **This exact fix
+  has not yet been tested on real hardware** — the hardware test already
+  done used the earlier, wrong `PART=0x20` build.
 
 ### The SDATA parameter index table (partial — get more pages if needed)
 
@@ -317,16 +349,20 @@ rebuild-and-test round here.)
 
 ### Next steps
 
-1. **Test the pushed SysEx fix on real Push hardware** — `xenia_render`'s
-   minimal boot sequence (it only waits for the DSP to start producing
-   audio, not necessarily every NVRAM/EEPROM init routine a full power-on
-   does) might differ from real hardware in some way that matters here;
-   real hardware is the actual target and hasn't been tested with this
-   specific fix yet.
+1. **Test the corrected `PART=0x00` SysEx fix on real Push hardware** —
+   not yet done as of this writing. The one hardware test run so far used
+   the earlier, wrong `PART=0x20` build, which the packet-field-layout
+   fix (see "The real answer" above) shows was a genuine no-op-causing
+   bug, not just an unconfirmed theory. This is the most promising
+   untested lead by far.
 2. If still silent on real hardware: get the remaining SDATA table pages
    (indices continue past 122) and convert the rest of `kParams` the same
    way — it's very likely *all* of it needs this, not just the filter.
-3. If filter specifically still doesn't respond even via confirmed-correct
+   Cross-check every index against `parameterDescriptions_xt.json`'s
+   `"parameterdescriptions"` array (searchable by name, e.g. `"F1Cutoff"`)
+   rather than re-reading PDF pages — the JSON is both more complete and
+   easier to grep.
+3. If filter specifically still doesn't respond even via the corrected
    SysEx: the per-patch "local MIDI receive" possibility from the
    original investigation is still open — check the manual for a
    per-single-patch MIDI-enable byte distinct from the global
