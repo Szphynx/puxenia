@@ -54,10 +54,11 @@ func (ws *webServer) buildState() map[string]any {
 			"channel":     ws.io.ChannelOptions(),
 			"recvChannel": ws.io.RecvChannelOptions(),
 		},
-		"seq":   seqSnap,
-		"panel": panel,
-		"audio": map[string]any{"ready": ready, "message": msg},
-		"diag":  map[string]any{"cpuPercent": ws.diag.getCPU(), "activeVoices": ws.diag.getVoices(), "deviceReady": ws.diag.getReady()},
+		"seq":         seqSnap,
+		"baseChannel": ws.io.rt.getBaseChannel(),
+		"panel":       panel,
+		"audio":       map[string]any{"ready": ready, "message": msg},
+		"diag":        map[string]any{"cpuPercent": ws.diag.getCPU(), "activeVoices": ws.diag.getVoices(), "deviceReady": ws.diag.getReady()},
 	}
 }
 
@@ -229,6 +230,27 @@ func (ws *webServer) handleTransport(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// handleBaseChannel queues an absolute base-channel write — the web UI's
+// equivalent of the SEQ page's own BASE CHANNEL encoder (audiosession.go's
+// ctlEncoder/pageSeq case), same underlying sharedConfig field, just an
+// absolute value instead of a +1/-1 tick.
+func (ws *webServer) handleBaseChannel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Channel int `json:"channel"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	select {
+	case ws.ctl <- controlEvent{kind: ctlBaseChannel, val: float64(body.Channel)}:
+	default:
+		http.Error(w, "control channel full, try again", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // handleTrack queues a track switch — the web UI's track picker, same
 // path as the SETTINGS-adjacent "track" slot the on-screen D-Pad Up/Down
 // drives (ctlSetParam already special-cases key=="track" in
@@ -297,6 +319,7 @@ func runWebServer(port int, version string, params *paramState, io *ioState, ast
 	mux.HandleFunc("POST /api/seq/mute", ws.handleSeqMute)
 	mux.HandleFunc("POST /api/seq/page", ws.handleSeqPage)
 	mux.HandleFunc("POST /api/transport", ws.handleTransport)
+	mux.HandleFunc("POST /api/base-channel", ws.handleBaseChannel)
 	mux.HandleFunc("/", httpx.ServeEmbedded(webUI, "ui/index.html"))
 
 	handler := httpx.WithLogging(httpx.WithCORS("GET, POST, OPTIONS", mux))

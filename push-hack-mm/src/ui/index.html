@@ -163,6 +163,10 @@
       <button class="xport-btn" id="btn-stop">Stop</button>
       <button class="xport-btn record" id="btn-record">Rec</button>
       <button class="xport-btn" id="seq-page-toggle">Steps 1-8</button>
+      <label style="margin-left:auto; font-size:11px; color:var(--dim); display:flex; align-items:center; gap:4px;">
+        BASE CH
+        <select class="io" id="seq-base-channel"></select>
+      </label>
     </div>
     <div class="seq-grid" id="seq-grid"></div>
     <div class="seq-row" style="grid-template-columns: 44px repeat(8,1fr) 34px; margin-top:6px;">
@@ -523,6 +527,37 @@ function applyIO(io) {
   }
 }
 
+// Base channel: options are always 1-16 (never change), unlike the I/O
+// selects above whose option lists are rebuilt from live system state —
+// so this only needs to build once and just track the selected value,
+// same touching-guard as the I/O selects so a poll can't yank the
+// dropdown out from under an in-progress selection.
+let baseChannelBuilt = false;
+function applyBaseChannel(ch) {
+  const el = document.getElementById("seq-base-channel");
+  if (!baseChannelBuilt) {
+    for (let i = 0; i < 16; i++) {
+      const o = document.createElement("option");
+      o.value = i;
+      o.textContent = i + 1;
+      el.appendChild(o);
+    }
+    el.addEventListener("focus", () => touching.add("seq-base-channel"));
+    el.addEventListener("blur", () => touching.delete("seq-base-channel"));
+    el.addEventListener("change", (e) => setBaseChannel(Number(e.target.value)));
+    baseChannelBuilt = true;
+  }
+  if (!touching.has("seq-base-channel")) el.value = ch;
+}
+async function setBaseChannel(ch) {
+  try {
+    await fetch("/api/base-channel", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: ch }),
+    });
+  } catch (e) { console.error("setBaseChannel failed", e); }
+}
+
 function applyAudioStatus(audio, deviceReady) {
   const el = document.getElementById("status");
   if (audio.ready && deviceReady === false) {
@@ -555,6 +590,7 @@ function applyState(state) {
   applySeq(state.seq || {}, state.track || 0);
   if (state.panel && state.panel.lcd) drawLCD(state.panel.lcd);
   applyIO(state.io || {});
+  applyBaseChannel(state.baseChannel || 0);
   applyAudioStatus(state.audio || {}, (state.diag || {}).deviceReady);
   applyDiag(state.diag || {});
   document.getElementById("version").textContent = state.version ? `v${state.version}` : "";

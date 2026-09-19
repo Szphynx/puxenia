@@ -362,6 +362,21 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 						seq.SetStepPage(ev.delta)
 					}
 					params.MarkDirty()
+
+				case ctlBaseChannel:
+					ch := int(ev.val)
+					if ch < 0 {
+						ch = 0
+					}
+					if ch > 15 {
+						ch = 15
+					}
+					rt.setBaseChannel(ch)
+					cSetParam(plugin, "base_channel", strconv.Itoa(ch))
+					if err := saveConfig(io.HackDir(), rt.snapshot()); err != nil {
+						log.Printf("web base_channel: saving %s: %v", configFileName, err)
+					}
+					params.MarkDirty()
 				}
 			default:
 				break drainCtl
