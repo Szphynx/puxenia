@@ -99,6 +99,7 @@ type midiHandler struct {
 	astatus *audioStatus
 	rt      *sharedConfig
 	level   *levelMeter
+	diag    *diagStats
 }
 
 // ctlKind is a controlEvent's kind — see controlEvent's doc.
@@ -165,7 +166,7 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 		val := uint8(binary.LittleEndian.Uint32(data[8:]) & 0x7F)
 
 		if cc == ccShift || cc == ccDevice {
-			onChordCC(cc, val, h.pmURL, h.params, h.io, h.astatus, h.level)
+			onChordCC(cc, val, h.pmURL, h.params, h.io, h.astatus, h.level, h.diag)
 			return
 		}
 
@@ -444,12 +445,12 @@ func runSupervised() {
 	diag := &diagStats{} // CPU%/active-voice diagnostics -- see audiosession.go
 
 	go runDependencyWatcher(pmURL)
-	go runDisplayLoop(pmURL, params, io, astatus, level)
+	go runDisplayLoop(pmURL, params, io, astatus, level, diag)
 
 	midiCh := make(chan [3]byte, 256)
 	ctlCh := make(chan controlEvent, 64)
 	ctlChWrite = ctlCh // see audiosession.go's scheduleProgramCommit
-	handler := &midiHandler{out: midiCh, ctl: ctlCh, pmURL: pmURL, params: params, io: io, astatus: astatus, rt: rt, level: level}
+	handler := &midiHandler{out: midiCh, ctl: ctlCh, pmURL: pmURL, params: params, io: io, astatus: astatus, rt: rt, level: level, diag: diag}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

@@ -28,7 +28,7 @@ var (
 
 // onChordCC is called for every channel-0 CC event. When Shift+Device are
 // held together (debounced 500ms), toggles the on-screen param UI.
-func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter) {
+func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter, diag *diagStats) {
 	chordMu.Lock()
 	if val > 0 {
 		chordHeld[cc] = true
@@ -47,7 +47,7 @@ func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus 
 	chordMu.Unlock()
 
 	if fire {
-		go toggleUI(pmURL, st, io, astatus, level)
+		go toggleUI(pmURL, st, io, astatus, level, diag)
 	}
 }
 

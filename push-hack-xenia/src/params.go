@@ -262,9 +262,12 @@ func (st *paramState) syncFromPluginState(plugin *C.bridge_plugin_t) {
 // which writes the chosen index to the real "program" key — Xenia has no
 // on-disk preset files or bulk "apply preset" call the way Braids did;
 // its ROM patches live inside the device itself, reachable only by
-// Program Change, with no name readback over MIDI). Numbered rather than
-// named for that reason — real factory patch names aren't available to
-// this host at all.
+// Program Change, with no name readback over MIDI). Starts out numbered
+// since nothing's been loaded yet; LearnPresetName fills in the real name
+// for whichever index is actually loaded, read off the plugin's emulated
+// LCD (see audiosession.go's diag.PatchDisplay poll) -- so the list slowly
+// gains real names for everything you've actually visited, never for the
+// other 127 you haven't (no way to ask the device for those in advance).
 func fetchPresetMeta() paramMeta {
 	names := make([]string, 128)
 	for i := range names {
@@ -313,11 +316,13 @@ func newParamState(metas []paramMeta) *paramState {
 			addSlot(key)
 		}
 	}
-	// "preset" and "octave_transpose" aren't on any paramPages grid page —
-	// PRESETS (pagePresets) renders and drives them itself (see
-	// renderPatchPage, movePresetCursor, loadStagedPreset, NudgeOctave).
+	// "preset", "octave_transpose" and "bank" aren't on any paramPages grid
+	// page — PRESETS (pagePresets) renders and drives them itself (see
+	// renderPatchPage, movePresetCursor, loadStagedPreset, NudgeOctave,
+	// NudgeBank).
 	addSlot("preset")
 	addSlot("octave_transpose")
+	addSlot("bank")
 	if presetSlot, ok := st.slots["preset"]; ok {
 		st.presetCursor = int(presetSlot.value + 0.5)
 	}
@@ -421,6 +426,22 @@ func (st *paramState) NudgeOctave(delta int) (val string, ok bool) {
 	return val, true
 }
 
+// NudgeBank applies one encoder tick to bank -- PRESETS page's column-3
+// knob, immediate like octave_transpose (Bank Select is a plain CC, not
+// gated behind Load the way a Program Change is). Not on any paramPages
+// grid page, so it can't go through applyEncoder.
+func (st *paramState) NudgeBank(delta int) (val string, ok bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	slot := st.slots["bank"]
+	if slot == nil {
+		return "", false
+	}
+	val = nudgeSlotLocked(slot, "bank", delta)
+	st.dirty = true
+	return val, true
+}
+
 // NudgeMasterVolume applies one tick of Push3's dedicated hardware Volume
 // encoder (push3.CCVolume, separate from the 8 param encoders) to
 // channel_volume — not on any paramPages grid page, so it can't go
@@ -472,6 +493,43 @@ func (st *paramState) PresetCursor() int {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	return st.presetCursor
+}
+
+// LoadedPresetIndex returns the "preset" slot's current value — the
+// program index actually loaded (or staged as loaded; see loadStagedPreset),
+// same computation renderPresetsPage uses for its own "loaded" highlight.
+// -1 if the preset slot doesn't exist.
+func (st *paramState) LoadedPresetIndex() int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	slot := st.slots["preset"]
+	if slot == nil {
+		return -1
+	}
+	return int(slot.value + 0.5)
+}
+
+// LearnPresetName fills in the real name for the currently-loaded program
+// slot once it's known (see fetchPresetMeta's doc) — id is the LCD's bank
+// letter+number ("A099"), name its patch name ("MonasteryChoirGM"); either
+// empty is a no-op. Only ever overwrites the entry the device says is
+// actually loaded right now, so a name never gets attributed to the wrong
+// index by a race with the browse cursor moving.
+func (st *paramState) LearnPresetName(loadedIdx int, id, name string) {
+	if name == "" {
+		return
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	slot := st.slots["preset"]
+	if slot == nil || loadedIdx < 0 || loadedIdx >= len(slot.meta.Options) {
+		return
+	}
+	label := name
+	if id != "" {
+		label = id + " " + name
+	}
+	slot.meta.Options[loadedIdx] = label
 }
 
 // loadStagedPreset commits the staged highlight as the actual preset
@@ -582,7 +640,7 @@ func webParamPages() []webParamPage {
 			out = append(out, webParamPage{Name: bankPageNames[b][i], Keys: keys})
 		}
 	}
-	out = append(out, webParamPage{Name: pageNames[pagePresets], Keys: []string{"preset", "octave_transpose"}})
+	out = append(out, webParamPage{Name: pageNames[pagePresets], Keys: []string{"preset", "octave_transpose", "bank"}})
 	return out
 }
 

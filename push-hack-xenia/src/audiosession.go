@@ -31,6 +31,19 @@ func cSetParam(plugin *C.bridge_plugin_t, key, val string) {
 	C.free(unsafe.Pointer(v))
 }
 
+// cGetParam is bridge_plugin_get_param's CString/free/buffer boilerplate --
+// returns "", false on any failure (unknown key, buffer too small, etc.).
+func cGetParam(plugin *C.bridge_plugin_t, key string) (string, bool) {
+	k := C.CString(key)
+	defer C.free(unsafe.Pointer(k))
+	buf := make([]byte, 64)
+	n := C.bridge_plugin_get_param(plugin, k, (*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf)))
+	if n < 0 {
+		return "", false
+	}
+	return string(buf[:n]), true
+}
+
 // asyncLogCh decouples logging from audioSession.run's render goroutine.
 // log.Printf does a blocking, unbuffered write to stdout -- fine anywhere
 // else, but on the one goroutine that also renders audio every block, that
@@ -122,14 +135,35 @@ func (m *levelMeter) get() float64  { return math.Float64frombits(m.bits.Load())
 // can be judged from real numbers instead of guessing from render-time
 // budget alone.
 type diagStats struct {
-	cpuBits atomic.Uint64
-	voices  atomic.Int32
+	cpuBits   atomic.Uint64
+	voices    atomic.Int32
+	patchID   atomic.Value // string, e.g. "A099" -- see lcdPatchDisplay's doc
+	patchName atomic.Value // string, e.g. "MonasteryChoirGM"
 }
 
 func (d *diagStats) setCPU(pct float64) { d.cpuBits.Store(math.Float64bits(pct)) }
 func (d *diagStats) getCPU() float64    { return math.Float64frombits(d.cpuBits.Load()) }
 func (d *diagStats) setVoices(n int)    { d.voices.Store(int32(n)) }
 func (d *diagStats) getVoices() int     { return int(d.voices.Load()) }
+
+func (d *diagStats) setPatchDisplay(id, name string) {
+	d.patchID.Store(id)
+	d.patchName.Store(name)
+}
+
+// PatchDisplay returns the live patch id ("A099", bank letter + number)
+// and name ("MonasteryChoirGM") read off the plugin's emulated LCD --
+// polled alongside active_voices on the same 2s tick in audioSession.run.
+// Empty strings before the first poll.
+func (d *diagStats) PatchDisplay() (id, name string) {
+	if v, ok := d.patchID.Load().(string); ok {
+		id = v
+	}
+	if v, ok := d.patchName.Load().(string); ok {
+		name = v
+	}
+	return id, name
+}
 
 // selfCPUTicks reads this process's utime+stime (in clock ticks) from
 // /proc/self/stat -- same field layout push-manager's own stats.go reads
@@ -363,6 +397,15 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 							if val, ok := params.NudgeOctave(ev.delta); ok {
 								cSetParam(plugin, "octave_transpose", val)
 							}
+						case 2:
+							// Bank Select (Microwave XT sound bank, e.g.
+							// A/B/C/D -- not to be confused with ctlBankFlip's
+							// unrelated 2-bank grouping of the param-page
+							// grid). See xenia_plugin.cpp's "bank" kParams
+							// entry for why the range is a placeholder.
+							if val, ok := params.NudgeBank(ev.delta); ok {
+								cSetParam(plugin, "bank", val)
+							}
 						}
 					case pageSettings:
 						switch ev.idx {
@@ -481,14 +524,21 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 			}
 			diag.setCPU(cpuPct)
 
-			voicesBuf := make([]byte, 16)
-			key := C.CString("active_voices")
-			if n := C.bridge_plugin_get_param(plugin, key, (*C.char)(unsafe.Pointer(&voicesBuf[0])), C.int(len(voicesBuf))); n >= 0 {
-				if v, err := strconv.Atoi(string(voicesBuf[:n])); err == nil {
+			if s, ok := cGetParam(plugin, "active_voices"); ok {
+				if v, err := strconv.Atoi(s); err == nil {
 					diag.setVoices(v)
 				}
 			}
-			C.free(unsafe.Pointer(key))
+
+			// Read off the plugin's emulated LCD -- the only source of
+			// real patch names/bank letters this host has (see
+			// xenia_plugin.cpp's mc68k::logToConsole override). Only
+			// meaningful in Single mode's default Play screen; an empty
+			// id/name just means the LCD hasn't shown that screen yet.
+			id, _ := cGetParam(plugin, "lcd_patch_id")
+			name, _ := cGetParam(plugin, "lcd_patch_name")
+			diag.setPatchDisplay(id, name)
+			params.LearnPresetName(params.LoadedPresetIndex(), id, name)
 
 			alogf("progress: blocks=%d slow=%d maxPre=%v maxWrite=%v cpu=%.1f%% voices=%d",
 				blocks, slowBlocks, maxPre, maxWrite, cpuPct, diag.getVoices())

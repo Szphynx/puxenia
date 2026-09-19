@@ -48,6 +48,20 @@ type webServer struct {
 	broker  *sse.Broker[[]byte]
 }
 
+// buildDiagState formats diagStats for the web UI's /sse/state stream --
+// patchId/patchName come from the plugin's emulated LCD (see
+// diagStats.setPatchDisplay's doc), empty until the LCD's shown its
+// default Single-mode Play screen at least once.
+func buildDiagState(diag *diagStats) map[string]any {
+	id, name := diag.PatchDisplay()
+	return map[string]any{
+		"cpuPercent":   diag.getCPU(),
+		"activeVoices": diag.getVoices(),
+		"patchId":      id,
+		"patchName":    name,
+	}
+}
+
 func (ws *webServer) buildState() map[string]any {
 	ready, msg := ws.astatus.get()
 	snap := ws.params.Snapshot()
@@ -70,7 +84,7 @@ func (ws *webServer) buildState() map[string]any {
 		// render loop (see diagStats) -- real headroom numbers for judging
 		// whether a heavier future emulation would fit, not a guess from
 		// render-time budget alone.
-		"diag": map[string]any{"cpuPercent": ws.diag.getCPU(), "activeVoices": ws.diag.getVoices()},
+		"diag": buildDiagState(ws.diag),
 	}
 }
 

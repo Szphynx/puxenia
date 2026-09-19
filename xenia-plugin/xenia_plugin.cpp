@@ -74,13 +74,68 @@
 // from the archive, makes the linker resolve the symbol to this one and
 // never pull in the archive's version -- the standard static-library
 // override trick, not a source patch to gearmulator itself.
+// Captured LCD content, parsed out of the very same MCLOG calls the
+// override above used to just discard. This is the ONLY source of real
+// patch names/bank letters this host has -- Xenia has no MIDI name
+// readback, but the emulated LCD prints exactly what a real Microwave
+// XT's screen would show, e.g.:
+//   "  Play Sound A099  |  Mode   |Main Vol."
+//   "  MonasteryChoirGM |  Sound  |   127"
+// Line 1's last space-separated token is bank+number ("A099"); line 2's
+// first '|'-delimited field is the patch name. Only valid for Single mode's
+// default Play screen -- Multi mode or a different screen would need a
+// different parse, not attempted here. Single-threaded by construction:
+// MCLOG only ever fires from inside device->process(), called only from
+// fillMoreOutput on the one goroutine that also calls get_param (see
+// main.go's midiHandler doc comment) -- no lock needed.
+std::string g_lcdLine1, g_lcdLine2;
+
 namespace mc68k
 {
-	void logToConsole(const std::string &) {}
+	void logToConsole(const std::string &s)
+	{
+		auto pos = s.find("LCD:\n");
+		if(pos == std::string::npos)
+			return;
+		std::string content = s.substr(pos + 5);
+		auto nl = content.find('\n');
+		if(nl == std::string::npos)
+		{
+			g_lcdLine1 = content;
+			g_lcdLine2.clear();
+		}
+		else
+		{
+			g_lcdLine1 = content.substr(0, nl);
+			g_lcdLine2 = content.substr(nl + 1);
+		}
+	}
 }
 
 namespace
 {
+	std::string trimmed(const std::string &s)
+	{
+		const auto a = s.find_first_not_of(" \t");
+		if(a == std::string::npos)
+			return "";
+		const auto b = s.find_last_not_of(" \t");
+		return s.substr(a, b - a + 1);
+	}
+
+	std::string firstField(const std::string &line)
+	{
+		const auto pos = line.find('|');
+		return trimmed(pos == std::string::npos ? line : line.substr(0, pos));
+	}
+
+	std::string lastToken(const std::string &s)
+	{
+		const auto t = trimmed(s);
+		const auto pos = t.find_last_of(' ');
+		return pos == std::string::npos ? t : t.substr(pos + 1);
+	}
+
 	constexpr uint32_t kNativeBlock = 64;
 	constexpr double kNativeRate = 40000.0; // xtLib/xtDevice.cpp: Device::getSamplerate()
 
@@ -166,6 +221,16 @@ namespace
 	constexpr ParamDef kParams[] = {
 		// -- FILTER page --
 		{"program",            "Program",             0, 127, kProgramSentinel, 0},
+		// Bank Select (CC32) -- confirmed hardwired per the real MIDI
+		// Implementation Chart (the same chart that confirmed the 7
+		// directly-recognized CCs elsewhere in this file), sent before a
+		// Program Change to pick which bank of 128 the change addresses.
+		// Range 0-7 is a placeholder, not verified against real hardware
+		// -- the emulated LCD's bank letter (see lcd_patch_id below) is
+		// the way to find out how many banks this ROM/card setup actually
+		// has: step this and watch whether the letter changes or the
+		// device just ignores out-of-range values.
+		{"bank",                "Bank",                0, 7,   32, 0},
 		{"cutoff",              "Filter 1 Cutoff",     0, 127, 50, 100},
 		{"resonance",           "Filter 1 Resonance",  0, 127, 56, 0},
 		{"filter_type",         "Filter 1 Type",       0, 12,  54, 0},
@@ -771,6 +836,10 @@ namespace
 			json += "]";
 			return write(json);
 		}
+		if(strcmp(key, "lcd_patch_id") == 0)
+			return write(lastToken(firstField(g_lcdLine1)));
+		if(strcmp(key, "lcd_patch_name") == 0)
+			return write(firstField(g_lcdLine2));
 		if(strcmp(key, "state") == 0)
 		{
 			// Read by the host right after instance creation (and after any

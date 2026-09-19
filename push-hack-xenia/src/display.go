@@ -130,14 +130,14 @@ func renderTopTabs(img *image.NRGBA, t widgets.Theme, current int) {
 // renderParamPage draws the current page: the "not ready" OSD first if
 // astatus reports the audio session isn't running (no page has any real
 // controls to show until it is), else the knob grid, PRESETS, or SETTINGS.
-func renderParamPage(st *paramState, io *ioState, astatus *audioStatus, level *levelMeter) *image.NRGBA {
+func renderParamPage(st *paramState, io *ioState, astatus *audioStatus, level *levelMeter, diag *diagStats) *image.NRGBA {
 	if ready, msg := astatus.get(); !ready {
 		return renderWaitingScreen(msg)
 	}
 	var img *image.NRGBA
 	switch st.Page() {
 	case pagePresets:
-		img = renderPresetsPage(st)
+		img = renderPresetsPage(st, diag)
 	case pageSettings:
 		img = io.render(level)
 	default:
@@ -301,12 +301,20 @@ func renderMasterMeter(img *image.NRGBA, level *levelMeter, volSlot *paramSlot) 
 
 // renderPresetsPage draws PRESETS: the preset browser in column 1 only
 // (not full-screen — encoder 1 moves a staged highlight, distinct from
-// the actually-loaded preset until Load/bottom-1 commits it), and octave
-// transpose as a pan-style knob in column 2, applied immediately.
-func renderPresetsPage(st *paramState) *image.NRGBA {
+// the actually-loaded preset until Load/bottom-1 commits it), octave
+// transpose as a pan-style knob in column 2, and bank select as a knob in
+// column 3 — both applied immediately, unlike the staged preset browser.
+// The live patch id/name read off the plugin's emulated LCD (diag's only
+// source of real names -- see xenia_plugin.cpp's lcd_patch_id/
+// lcd_patch_name) is shown above the bank knob, since it's the only place
+// this host can show a bank LETTER at all (the numbered "Program NNN"
+// list has no way to know which real bank a given index currently lands
+// in until it's been loaded once).
+func renderPresetsPage(st *paramState, diag *diagStats) *image.NRGBA {
 	st.mu.Lock()
 	presetSlot := st.slots["preset"]
 	octSlot := st.slots["octave_transpose"]
+	bankSlot := st.slots["bank"]
 	st.mu.Unlock()
 
 	img := image.NewNRGBA(image.Rect(0, 0, screenW, screenH))
@@ -360,9 +368,27 @@ func renderPresetsPage(st *paramState) *image.NRGBA {
 		})
 	}
 
+	if diag != nil {
+		if id, name := diag.PatchDisplay(); id != "" || name != "" {
+			label := strings.TrimSpace(id + " " + name)
+			if len(label) > 18 {
+				label = label[:18]
+			}
+			text.Draw(img, 2*cellW+4, topStripH+14, label, xtTeal)
+		}
+	}
+	if bankSlot != nil {
+		widgets.DrawKnobArc(img, xtTheme, 2*cellW+knobCX, knobCY, knobR, widgets.Knob{
+			Value: bankSlot.value,
+			Min:   bankSlot.meta.Min,
+			Max:   bankSlot.meta.Max,
+		})
+	}
+
 	var bottom [8]widgets.SoftButton
 	bottom[0] = widgets.SoftButton{Label: "LOAD", State: widgets.SoftConfirm}
 	bottom[1] = widgets.SoftButton{Label: "OCTAVE"}
+	bottom[2] = widgets.SoftButton{Label: "BANK"}
 	widgets.DrawBotStrip(img, xtTheme, screenH-botStripH, screenW, cellW, botStripH, bottom, "")
 	return img
 }
@@ -388,7 +414,7 @@ func renderWaitingScreen(msg string) *image.NRGBA {
 // UI reads them as controls, not notes), syncing LEDs for the current
 // page, and forcing an immediate frame — or releasing all three back to
 // the native Push UI / normal Live routing.
-func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter) {
+func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter, diag *diagStats) {
 	uiMu.Lock()
 	uiOn = !uiOn
 	on := uiOn
@@ -407,7 +433,7 @@ func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, l
 		uiMu.Lock()
 		lastPage = page
 		uiMu.Unlock()
-		if err := client.PushImage(renderParamPage(st, io, astatus, level)); err != nil {
+		if err := client.PushImage(renderParamPage(st, io, astatus, level, diag)); err != nil {
 			log.Printf("display: push frame: %v", err)
 		}
 		log.Printf("push-xenia: UI ON (Shift+Device) — MIDI intercept enabled")
@@ -442,7 +468,7 @@ func shutdownUI(pmURL string) {
 // live meter, the only thing that needs continuous redraws with no other
 // trigger of its own. Also re-syncs LEDs whenever the page changes (a
 // top-button press elsewhere), since that has no other trigger either.
-func runDisplayLoop(pmURL string, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter) {
+func runDisplayLoop(pmURL string, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter, diag *diagStats) {
 	client := pmclient.New(pmURL)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -465,7 +491,7 @@ func runDisplayLoop(pmURL string, st *paramState, io *ioState, astatus *audioSta
 			syncUILEDs(pmURL, page)
 		}
 
-		if err := client.PushImage(renderParamPage(st, io, astatus, level)); err != nil {
+		if err := client.PushImage(renderParamPage(st, io, astatus, level, diag)); err != nil {
 			log.Printf("display: push frame: %v", err)
 		}
 	}
