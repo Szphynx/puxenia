@@ -469,25 +469,36 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 				blockPeak = a
 			}
 		}
-		level.set(math.Max(level.get()*meterDecay, blockPeak))
-
 		for i := range wide {
 			wide[i] = 0
 		}
-		// Which channel pair the stereo signal lands on is user-selectable
-		// (I/O picker's "AUDIO CHANNEL" section) and read fresh every
-		// block — applying it needs no PCM reopen, unlike a device or
-		// hw_params change, since the channel count itself doesn't change.
-		offset := rt.getChannelOffset()
-		if offset < 0 || offset+1 >= s.channels {
-			offset = 0 // defensive: picker only ever offers valid pairs for s.channels
-		}
-		for f := 0; f < s.period; f++ {
-			base := f*s.channels + offset
-			wide[base] = stereo[f*2+0]
-			if offset+1 < s.channels {
-				wide[base+1] = stereo[f*2+1]
+		// push-hub's "not connected to output" bypass (docs/push-hub-
+		// proposal.md): the plugin still renders every block above (so
+		// envelopes/voice state don't jump when refocused), but wide stays
+		// all-zero and the meter reads silent — true output bypass, not
+		// just a UI/MIDI lockout, matching the pedalboard model this was
+		// built to. Defaults focused=true, so a hack run without push-hub
+		// always reaches this copy exactly as before.
+		if isFocused() {
+			level.set(math.Max(level.get()*meterDecay, blockPeak))
+			// Which channel pair the stereo signal lands on is
+			// user-selectable (I/O picker's "AUDIO CHANNEL" section) and
+			// read fresh every block — applying it needs no PCM reopen,
+			// unlike a device or hw_params change, since the channel
+			// count itself doesn't change.
+			offset := rt.getChannelOffset()
+			if offset < 0 || offset+1 >= s.channels {
+				offset = 0 // defensive: picker only ever offers valid pairs for s.channels
 			}
+			for f := 0; f < s.period; f++ {
+				base := f*s.channels + offset
+				wide[base] = stereo[f*2+0]
+				if offset+1 < s.channels {
+					wide[base+1] = stereo[f*2+1]
+				}
+			}
+		} else {
+			level.set(0)
 		}
 
 		preElapsed := time.Since(blockStart)

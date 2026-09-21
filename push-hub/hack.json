@@ -1,0 +1,9 @@
+{
+  "id": "push-hub",
+  "name": "push-hub",
+  "description": "A picker/launcher for the other Push 3 synth hacks installed alongside it (puXenia, puMMa, ...), registered in hacks.json. Owns Shift+Device exclusively and arbitrates which hack currently reads Push3's own pads/CCs and owns the screen -- without it, every installed hack sees every pad/CC event at once (ALSA sequencer subscriptions are broadcast, not exclusive) and Shift+Device races between them, so only one hack was ever usable at a time. Shift+Device opens the hub's on-screen list: D-Pad Up/Down moves the cursor, bottom-screen button 1 focuses the highlighted hack (POSTs /api/focus to it, defocuses every other registered hack -- true output bypass on the unfocused ones, not just a UI lockout), bottom-screen button 2 starts/stops its underlying service. Each row polls that hack's own GET /api/state for alive/dead, a live VU meter, and MIDI channel. No DSP/audio of its own -- see docs/push-hub-proposal.md for the full design.",
+  "version": "0.1.0",
+  "author": "Sphynx",
+  "binary": "push-hub",
+  "enabled": true
+}

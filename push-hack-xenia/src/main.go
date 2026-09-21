@@ -54,6 +54,11 @@ const (
 	// manually since hackcfg.Load only uses this as a fallback for a
 	// missing/unparsable field, not the normal path.
 	defaultWebPort = 7707
+	// defaultHubURL — push-hub's own well-known local port (see
+	// docs/push-hub-proposal.md). Probed once at startup (chord.go's
+	// probeHub) to decide whether this hack's own Shift+Device binding
+	// should stand down in favor of hub-driven focus.
+	defaultHubURL = "http://localhost:7709"
 
 	// How often the supervisor re-checks card presence / hw_params once
 	// a session is already running — catches Live restarting with
@@ -133,6 +138,17 @@ type controlEvent struct {
 
 func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 	fromPush3 := src.Client == alsaseq.Push3ClientDefault
+
+	// push-hub arbitrates which hack currently reads Push3's own pads/CCs
+	// (docs/push-hub-proposal.md) — every fromPush3 branch below (control
+	// surface AND pad notes) is a no-op while this hack isn't the focused
+	// one. Defaults true (see display.go's focused var), so a hack run
+	// without push-hub installed behaves exactly as before this existed.
+	// External gear/Live (fromPush3==false) is never gated here — that
+	// path has its own recvChannel filtering below, independent of focus.
+	if fromPush3 && !isFocused() {
+		return
+	}
 
 	// Record raw traffic for the SETTINGS page's MIDI IN activity monitor
 	// before any of the filtering below — see midiMonitor's doc comment.
@@ -379,6 +395,16 @@ func runSupervised() {
 		pmURL = defaultPushManagerURL
 	}
 
+	// One-time probe (see chord.go's doc) — if push-hub is already up,
+	// this hack's own Shift+Device binding stands down and focus becomes
+	// entirely hub-driven via POST /api/focus (webserver.go). Not
+	// re-checked live: installing push-hub after this hack is already
+	// running needs a restart of this hack to take effect.
+	hubPresent = probeHub(defaultHubURL)
+	if hubPresent {
+		log.Printf("push-hub detected at %s — local Shift+Device disabled, focus is hub-controlled", defaultHubURL)
+	}
+
 	// The audio render goroutine itself is allocation-free (all buffers
 	// pre-allocated, no per-iteration heap traffic) and stays that way —
 	// but the display loop legitimately allocates a fresh PNG frame on
@@ -472,7 +498,7 @@ func runSupervised() {
 		log.Printf("loading %s for web UI port: %v (defaulting to %d)", *configPath, err, defaultWebPort)
 		hcfg.Port = defaultWebPort
 	}
-	go runWebServer(hcfg.Port, hcfg.Version, params, io, astatus, diag, ctlCh, shutdown)
+	go runWebServer(hcfg.Port, hcfg.Version, pmURL, params, io, astatus, diag, level, ctlCh, shutdown)
 
 	// One port, see midisession.go doc: pinned Push3 control surface +
 	// notes, picker-retargetable notes, and always open for external gear.
