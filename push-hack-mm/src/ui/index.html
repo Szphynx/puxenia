@@ -6,242 +6,253 @@
 <title>puMMa</title>
 <style>
   /*
-   * Palette matches the Push screen's own Elektron-inspired theme
-   * (src/display.go's mmTheme/mmChassis/mmGreen/mmRed/mmAmber) so this
-   * page reads as the same instrument, not a generic web skin.
+   * Monochrome dot-matrix look, matched against E's own puMMa reference
+   * screenshot (a Monomodule-style editor: white paper, black ink,
+   * dashed cell grid, blocky pixel-ish caps, solid-black = selected).
+   * Sequencer trig colors (green/red/amber) stay — those read hardware
+   * state (which trig type a step is), not decoration — everything else
+   * is pure black-on-white.
    */
   :root {
-    --chassis: #141416; /* mmChassis */
-    --panel:   #1c1c1f;
-    --track:   #2c2c30; /* mmTrack */
-    --ink:     #d8d8d0; /* mmInk */
-    --green:   #3ce064; /* mmGreen */
-    --red:     #e83c3c; /* mmRed */
-    --amber:   #ffb030; /* mmAmber */
-    --dim:     #6a6a70;
+    --paper: #ffffff;
+    --ink:   #000000;
+    --dim:   #6a6a6a;
+    --line:  #000000;
+    --green: #1a9c40; /* mmGreen, darkened for contrast on white */
+    --red:   #c81e1e; /* mmRed, darkened for contrast on white */
+    --amber: #b87800; /* mmAmber, darkened for contrast on white */
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: var(--chassis);
+    background: var(--paper);
     color: var(--ink);
-    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font: 13px/1.4 ui-monospace, "SF Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+    font-weight: 700;
   }
   header {
-    padding: 12px 16px;
+    padding: 10px 14px;
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-    border-bottom: 2px solid var(--track);
+    border-bottom: 3px solid var(--ink);
   }
   header h1 {
-    font-size: 15px;
+    font-size: 17px;
     margin: 0;
-    font-weight: 700;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
-    color: var(--amber);
   }
   #status {
     font-size: 11px;
-    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     padding: 3px 8px;
-    border-radius: 3px;
-    background: var(--track);
+    border: 1px solid var(--ink);
   }
-  #status.ready { background: var(--green); color: #05170a; }
-  #status.notready { background: var(--red); color: #1a0505; }
+  #status.ready, #status.notready { background: var(--paper); color: var(--ink); }
   #diag { font-size: 11px; color: var(--dim); }
 
   #track-picker { display: flex; gap: 4px; margin-left: auto; }
   .track-btn {
-    appearance: none; border: none; border-radius: 3px;
-    width: 30px; height: 30px; font-weight: 700; font-size: 12px;
-    background: var(--track); color: var(--ink); cursor: pointer;
+    appearance: none; border: 1px solid var(--ink); border-radius: 0;
+    width: 28px; height: 28px; font-weight: 700; font-size: 12px;
+    background: var(--paper); color: var(--ink); cursor: pointer;
   }
-  .track-btn.active { background: var(--amber); color: #201400; }
+  .track-btn.active { background: var(--ink); color: var(--paper); }
 
-  main { max-width: 820px; margin: 0 auto; padding: 0 0 40px; }
+  main { max-width: 900px; margin: 0 auto; padding: 0 0 40px; }
 
-  #tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 10px 16px 0; }
+  #tabs { display: flex; flex-wrap: wrap; gap: 0; padding: 10px 14px 0; }
   .tab {
-    appearance: none; border: none; padding: 8px 12px; font: inherit;
-    font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
-    text-transform: uppercase; background: var(--track); color: var(--ink);
-    cursor: pointer; border-radius: 3px 3px 0 0;
+    appearance: none; border: 1px solid var(--ink); border-right: none; padding: 7px 12px; font: inherit;
+    font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase; background: var(--paper); color: var(--ink);
+    cursor: pointer;
   }
-  .tab.active { background: var(--amber); color: #201400; }
+  .tab:last-of-type { border-right: 1px solid var(--ink); }
+  .tab.active { background: var(--ink); color: var(--paper); }
 
-  .page { display: none; padding: 16px; }
-  .page.active { display: block; }
+  .page { display: none; margin: 0 14px; }
+  .page.active {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    border: 1px solid var(--ink);
+  }
 
   .row {
-    display: grid; grid-template-columns: 150px 1fr 56px;
-    align-items: center; gap: 12px; padding: 9px 0;
-    border-bottom: 1px solid var(--track);
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 10px 4px;
+    border-right: 1px dashed var(--ink);
+    border-top: 1px dashed var(--ink);
   }
-  .row:last-child { border-bottom: none; }
   .row label {
-    font-size: 12px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; max-width: 100%;
   }
-  .row .val { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
-  input[type=range] { width: 100%; accent-color: var(--amber); }
-  .row.accent-filter input[type=range] { accent-color: var(--green); }
-  .row.accent-lfo input[type=range] { accent-color: var(--amber); }
+  .row .val { font-size: 12px; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--ink); }
+  .row.accent-filter .val, .row.accent-filter label { color: var(--green); }
+  .row.accent-lfo .val, .row.accent-lfo label { color: var(--amber); }
 
   /* Perilla (knob) — the default control for a per-track param (all of
      them "int" here; mm_plugin.cpp never emits "float"). A native
      <input type=range> maps value to horizontal thumb position, which
      doesn't match a rotary encoder's vertical-drag convention, so this is
-     a plain div driven by pointer events (see buildKnob) instead. */
+     a plain div driven by pointer events (see buildKnob) instead.
+     Drawn as a 300deg arc gauge (track + value-fraction fill, value
+     printed inside), not a pointer-line dial — this is the exact shape
+     core/gfx/widgets.DrawKnobArc already draws on the unit's own Push
+     screen (see display.go's DrawKnobArc call), so the web control
+     matches the hardware control it's standing in for. */
+  .row.knob-row { flex-direction: column; }
+  .row.knob-row .knob { order: 1; }
+  .row.knob-row label { order: 2; }
+  .row.knob-row .val { display: none; }
   .knob {
-    --knob-angle: -135deg;
+    --knob-sweep: 0deg; /* set by buildKnob: value fraction * 300deg */
     position: relative;
-    width: 32px; height: 32px; margin: 0 auto;
-    border-radius: 50%;
-    background: radial-gradient(circle at 33% 28%, #3a3a3e 0%, #18181b 55%, #0a0a0c 100%);
-    box-shadow:
-      0 0 0 1px #000,
-      0 1px 2px rgba(0, 0, 0, 0.6),
-      inset 0 1px 1px rgba(255, 255, 255, 0.1),
-      inset 0 -2px 3px rgba(0, 0, 0, 0.7);
+    width: 34px; height: 34px; margin: 2px 0;
     cursor: ns-resize;
     touch-action: none;
     outline: none;
   }
-  .knob:focus-visible { box-shadow: 0 0 0 2px var(--amber), 0 1px 2px rgba(0, 0, 0, 0.6); }
-  .knob-pointer {
-    position: absolute;
-    left: 50%; top: 4px;
-    width: 2px; height: 11px;
-    margin-left: -1px;
-    background: var(--amber);
-    border-radius: 1px;
-    transform-origin: 50% 12px; /* knob's own center, ~radius below the pointer's top */
-    transform: rotate(var(--knob-angle));
+  .knob:focus-visible { box-shadow: 0 0 0 2px var(--ink); border-radius: 50%; }
+  .knob-track, .knob-fill {
+    position: absolute; inset: 0; border-radius: 50%;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
   }
-  .row.accent-filter .knob-pointer { background: var(--green); }
+  .knob-track {
+    background: conic-gradient(from 210deg, #ccc 0deg 300deg, transparent 300deg 360deg);
+  }
+  .knob-fill {
+    background: conic-gradient(from 210deg, var(--ink) 0deg var(--knob-sweep), transparent var(--knob-sweep) 360deg);
+  }
+  .knob-value {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px;
+    pointer-events: none;
+  }
+  .row.accent-filter .knob-fill { background: conic-gradient(from 210deg, var(--green) 0deg var(--knob-sweep), transparent var(--knob-sweep) 360deg); }
+  .row.accent-lfo .knob-fill { background: conic-gradient(from 210deg, var(--amber) 0deg var(--knob-sweep), transparent var(--knob-sweep) 360deg); }
 
   /* Deslizador (fader) — the "level" mixer param, styled as a channel-
-     strip fader rather than another knob (same convention as the
-     hardware's own LEVEL/MUTE page pairing a fader-style level with a
-     mute lamp). Same <input type=range> the row grid already lays out,
-     just restyled with a recessed track and a metal handle. */
+     strip meter fader (vertical, like the reference sheet's LEV strip)
+     rather than another knob. Same <input type=range> the grid already
+     lays out, just oriented vertically. */
   input.fader[type=range] {
     -webkit-appearance: none;
     appearance: none;
-    height: 20px;
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 20px;
+    height: 96px;
+    margin: 2px 0;
     background: transparent;
   }
   input.fader[type=range]::-webkit-slider-runnable-track,
   input.fader[type=range]::-moz-range-track {
-    height: 6px; border-radius: 3px;
-    background: var(--track);
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+    width: 6px;
+    background: var(--paper);
+    border: 1px dashed var(--ink);
   }
   input.fader[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 12px; height: 20px; margin-top: -7px;
-    border-radius: 2px;
-    background:
-      linear-gradient(90deg, transparent 0 44%, rgba(255, 255, 255, 0.45) 44% 56%, transparent 56% 100%),
-      linear-gradient(#3a3a3e, #0a0a0c);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    width: 18px; height: 12px;
+    background: var(--ink);
   }
   input.fader[type=range]::-moz-range-thumb {
-    width: 12px; height: 20px; border: none;
-    border-radius: 2px;
-    background:
-      linear-gradient(90deg, transparent 0 44%, rgba(255, 255, 255, 0.45) 44% 56%, transparent 56% 100%),
-      linear-gradient(#3a3a3e, #0a0a0c);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    width: 18px; height: 12px; border: none;
+    background: var(--ink);
   }
 
-  /* Indicador (LED) — small glowing lamp, reusable wherever a control
-     needs an on/off/attention cue beyond text alone: the header's audio
-     status, and the MUTE toggle below. */
+  /* Indicador (LED) — small lamp, reusable wherever a control needs an
+     on/off/attention cue beyond text alone: the header's audio status,
+     and the MUTE toggle below. Monochrome: unlit = outline, lit = solid
+     black, matching the reference sheet's selected/STAT cell language
+     rather than a colored glow. */
   .led {
     display: inline-block;
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--track);
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+    width: 7px; height: 7px;
+    border: 1px solid var(--ink);
     margin-right: 6px;
     vertical-align: middle;
   }
-  .led-green { background: var(--green); box-shadow: 0 0 6px 1px var(--green), inset 0 0 0 1px rgba(0, 0, 0, 0.4); }
-  .led-red   { background: var(--red);   box-shadow: 0 0 6px 1px var(--red),   inset 0 0 0 1px rgba(0, 0, 0, 0.4); }
-  .led-amber { background: var(--amber); box-shadow: 0 0 5px 1px var(--amber), inset 0 0 0 1px rgba(0, 0, 0, 0.4); }
+  .led-on { background: var(--ink); }
 
   .mute-toggle {
-    appearance: none; border: none; border-radius: 3px;
-    background: var(--track); color: var(--ink);
-    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
-    padding: 7px 10px; cursor: pointer;
+    appearance: none; border: 1px solid var(--ink);
+    background: var(--paper); color: var(--ink);
+    font: inherit;
+    font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase;
+    padding: 6px 8px; cursor: pointer;
     display: flex; align-items: center; justify-content: center; gap: 2px;
   }
-  .mute-toggle.active { background: #3a1414; color: var(--red); }
+  .mute-toggle.active { background: var(--ink); color: var(--paper); }
+  .mute-toggle.active .led { border-color: var(--paper); }
+  .mute-toggle.active .led.led-on { background: var(--paper); }
 
   /* -- SEQ page ------------------------------------------------------- */
   #seq-page { padding: 16px; display: none; }
   #seq-page.active { display: block; }
   #seq-transport { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
   .xport-btn {
-    appearance: none; border: none; border-radius: 4px; padding: 8px 14px;
+    appearance: none; border: 1px solid var(--ink); padding: 8px 14px;
     font-weight: 700; font-size: 12px; text-transform: uppercase;
-    background: var(--track); color: var(--ink); cursor: pointer;
+    background: var(--paper); color: var(--ink); cursor: pointer;
   }
-  .xport-btn.on.play { background: var(--green); color: #05170a; }
-  .xport-btn.on.record { background: var(--red); color: #1a0505; }
+  .xport-btn.on.play { background: var(--green); color: var(--paper); border-color: var(--green); }
+  .xport-btn.on.record { background: var(--red); color: var(--paper); border-color: var(--red); }
   #seq-page-toggle { margin-left: auto; }
 
   .seq-grid { display: flex; flex-direction: column; gap: 3px; }
   .seq-row { display: grid; grid-template-columns: 44px repeat(8, 1fr) 34px; gap: 3px; align-items: center; }
   .seq-row .track-label { font-size: 11px; font-weight: 700; color: var(--dim); }
-  .seq-row.current .track-label { color: var(--amber); }
+  .seq-row.current .track-label { color: var(--ink); }
   .seq-step {
-    appearance: none; border: none; border-radius: 3px; height: 32px;
-    background: var(--track); cursor: pointer;
+    appearance: none; border: 1px solid var(--ink); height: 32px;
+    background: var(--paper); cursor: pointer;
   }
-  .seq-step.on { background: var(--green); }
-  .seq-step.on.red { background: var(--red); }
-  .seq-step.on.yellow { background: var(--amber); }
+  .seq-step.on { background: var(--green); border-color: var(--green); }
+  .seq-step.on.red { background: var(--red); border-color: var(--red); }
+  .seq-step.on.yellow { background: var(--amber); border-color: var(--amber); }
   .mute-btn {
-    appearance: none; border: none; border-radius: 3px; height: 26px;
-    background: var(--track); color: var(--ink); font-size: 10px; font-weight: 700; cursor: pointer;
+    appearance: none; border: 1px solid var(--ink); height: 26px;
+    background: var(--paper); color: var(--ink); font-size: 10px; font-weight: 700; cursor: pointer;
   }
-  .mute-btn.on { background: var(--red); color: #1a0505; }
+  .mute-btn.on { background: var(--ink); color: var(--paper); }
 
   #lcd-wrap { margin-top: 16px; text-align: center; }
   #lcd {
-    background: #0a1a0e; border-radius: 4px; image-rendering: pixelated;
-    width: 384px; height: 192px; border: 2px solid var(--track);
+    background: #0a1a0e; image-rendering: pixelated;
+    width: 384px; height: 192px; border: 1px solid var(--ink);
   }
   #lcd-caption { font-size: 10px; color: var(--dim); margin-top: 4px; }
 
   /* -- I/O / SETTINGS -------------------------------------------------- */
   #io {
-    background: var(--panel); color: var(--ink); margin: 16px 16px 0;
-    border-radius: 4px; padding: 14px 16px;
+    background: var(--paper); color: var(--ink); margin: 16px 14px 0;
+    border: 1px solid var(--ink); padding: 14px 16px;
   }
-  #io h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 10px; opacity: 0.7; }
+  #io h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 10px; }
   .io-row { display: grid; grid-template-columns: 110px 1fr; gap: 10px; align-items: center; padding: 6px 0; }
   .io-row label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
   select.io {
-    width: 100%; background: #0e0e10; color: var(--amber); border: 1px solid var(--track);
-    border-radius: 4px; padding: 6px 8px; font-weight: 700; font-size: 12px;
+    width: 100%; background: var(--paper); color: var(--ink); border: 1px solid var(--ink);
+    padding: 6px 8px; font-weight: 700; font-size: 12px; font-family: inherit;
   }
-  select.io:focus { outline: 2px solid var(--amber); }
-  #version { position: fixed; right: 6px; bottom: 4px; font-size: 10px; color: #444; pointer-events: none; }
+  select.io:focus { outline: 2px solid var(--ink); }
+  #version { position: fixed; right: 6px; bottom: 4px; font-size: 10px; color: var(--dim); pointer-events: none; }
 </style>
 </head>
 <body>
 <header>
   <h1>puMMa</h1>
-  <span id="status"><span class="led led-amber" id="status-led"></span><span id="status-text">connecting…</span></span>
+  <span id="status"><span class="led" id="status-led"></span><span id="status-text">connecting…</span></span>
   <span id="diag" title="CPU% of one core, active voice count">—</span>
   <div id="track-picker"></div>
 </header>
@@ -311,7 +322,8 @@ function buildKnob(meta, row) {
   el.setAttribute("role", "slider");
   el.setAttribute("aria-valuemin", meta.min);
   el.setAttribute("aria-valuemax", meta.max);
-  el.innerHTML = '<div class="knob-pointer"></div>';
+  el.innerHTML = '<div class="knob-track"></div><div class="knob-fill"></div><div class="knob-value"></div>';
+  const valueEl = el.querySelector(".knob-value");
 
   const step = Math.max(1, (meta.max - meta.min) / 200);
   let value = meta.min;
@@ -321,8 +333,8 @@ function buildKnob(meta, row) {
     set(v) {
       value = Number(v);
       const frac = meta.max > meta.min ? (value - meta.min) / (meta.max - meta.min) : 0;
-      const angle = -135 + Math.max(0, Math.min(1, frac)) * 270;
-      el.style.setProperty("--knob-angle", angle + "deg");
+      el.style.setProperty("--knob-sweep", (Math.max(0, Math.min(1, frac)) * 300) + "deg");
+      valueEl.textContent = Math.round(value);
       el.setAttribute("aria-valuenow", value);
     },
   });
@@ -384,7 +396,7 @@ function buildMuteToggle(meta, row) {
     set(v) {
       value = Number(v);
       el.classList.toggle("active", value === 1);
-      el.querySelector(".led").className = "led" + (value === 1 ? " led-red" : "");
+      el.querySelector(".led").className = "led" + (value === 1 ? " led-on" : "");
     },
   });
   el.value = 0;
@@ -409,8 +421,10 @@ function buildParamRow(meta) {
   row.appendChild(label);
 
   let control;
+  let mount;
   if (meta.key === "mute") {
     control = buildMuteToggle(meta, row);
+    mount = control;
   } else if (meta.key === "level") {
     control = document.createElement("input");
     control.type = "range";
@@ -424,11 +438,14 @@ function buildParamRow(meta) {
       setParam(meta.key, Number(control.value));
       row.querySelector(".val").textContent = control.value;
     });
+    mount = control;
   } else {
     control = buildKnob(meta, row);
+    mount = control;
+    row.classList.add("knob-row");
   }
   control.className += " control";
-  row.appendChild(control);
+  row.appendChild(mount);
 
   const val = document.createElement("span");
   val.className = "val";
@@ -752,12 +769,12 @@ function applyAudioStatus(audio, deviceReady) {
   const text = document.getElementById("status-text");
   if (audio.ready && deviceReady === false) {
     el.className = "notready";
-    led.className = "led led-amber";
+    led.className = "led";
     text.textContent = "Booting…";
     return;
   }
   el.className = audio.ready ? "ready" : "notready";
-  led.className = "led " + (audio.ready ? "led-green" : "led-red");
+  led.className = "led" + (audio.ready ? " led-on" : "");
   text.textContent = audio.ready ? "Running" : (audio.message || "Not ready").split("\n")[0];
 }
 
@@ -797,7 +814,7 @@ async function init() {
   es.onmessage = (ev) => applyState(JSON.parse(ev.data));
   es.onerror = () => {
     document.getElementById("status").className = "notready";
-    document.getElementById("status-led").className = "led led-red";
+    document.getElementById("status-led").className = "led";
     document.getElementById("status-text").textContent = "Disconnected — retrying…";
   };
 }
