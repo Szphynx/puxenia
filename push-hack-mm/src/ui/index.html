@@ -248,33 +248,26 @@
   select.io:focus { outline: 2px solid var(--ink); }
   #lcdfx-intensity:disabled { opacity: 0.35; }
 
-  /* LCD screen FX — makes lines, fonts, knobs and numbers render the way
-     an early-2000s monochrome LCD draws them: no antialiasing, a bit of
-     pixel bleed/ghosting, a faint visible dot grid. The main driver is
-     the `filter` on #lcd-target (blur softens edges, then contrast
-     re-thresholds them into the blocky, jagged-edged look that low
-     antialiasing gives text and curves) — that's what actually touches
-     glyphs/knob arcs/borders, unlike a flat overlay tint, which would
-     just darken the blank paper instead of the ink on it. #lcd-fx itself
-     is just the faint dot-grid texture layered on top, and stays low-
-     opacity so it doesn't wash the background. Both driven by the same
-     intensity; on/off + intensity controls live only on the SETTINGS
-     page (see #lcdfx-toggle/#lcdfx-intensity above) — nothing elsewhere
-     reads or writes lcd-fx state. */
-  #lcd-target { filter: blur(var(--lcd-fx-blur, 0px)) contrast(var(--lcd-fx-contrast, 1)); }
+  /* LCD screen FX — a low-pixel/scanline overlay over the whole page, so
+     the browser UI reads a bit more like the unit's own dot-matrix
+     screen. Purely a fixed, pointer-events:none layer above everything
+     (z-index 999) so it never interferes with any control underneath;
+     its own on/off + intensity controls live only on the SETTINGS page
+     (see #lcdfx-toggle/#lcdfx-intensity above) — nothing elsewhere reads
+     or writes lcd-fx state. */
   #lcd-fx {
     position: fixed; inset: 0; z-index: 999; pointer-events: none;
-    opacity: var(--lcd-fx-grid-opacity, 0);
+    opacity: var(--lcd-fx-opacity, 0);
     mix-blend-mode: multiply;
     background:
-      repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.5) 0px, rgba(0, 0, 0, 0.5) 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(to right, rgba(0, 0, 0, 0.2) 0px, rgba(0, 0, 0, 0.2) 1px, transparent 1px, transparent 3px);
+      repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.4) 0px, rgba(0, 0, 0, 0.4) 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(to right, rgba(0, 0, 0, 0.15) 0px, rgba(0, 0, 0, 0.15) 1px, transparent 1px, transparent 3px),
+      radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.3) 100%);
   }
   #version { position: fixed; right: 6px; bottom: 4px; font-size: 10px; color: var(--dim); pointer-events: none; }
 </style>
 </head>
 <body>
-<div id="lcd-target">
 <header>
   <h1>puMMa</h1>
   <span id="status"><span class="led" id="status-led"></span><span id="status-text">connecting…</span></span>
@@ -324,7 +317,6 @@
     </div>
   </section>
 </main>
-</div>
 <div id="lcd-fx" aria-hidden="true"></div>
 <span id="version"></span>
 <script>
@@ -852,11 +844,8 @@ function loadLcdFx() {
 }
 
 function applyLcdFx(state) {
-  const amt = state.enabled ? state.intensity / 100 : 0;
-  const target = document.getElementById("lcd-target");
-  target.style.setProperty("--lcd-fx-contrast", (1 + amt * 24).toFixed(1));
-  target.style.setProperty("--lcd-fx-blur", (amt * 1.6).toFixed(2) + "px");
-  document.getElementById("lcd-fx").style.setProperty("--lcd-fx-grid-opacity", (amt * 0.14).toFixed(3));
+  document.getElementById("lcd-fx").style.setProperty(
+    "--lcd-fx-opacity", state.enabled ? (state.intensity / 100) : 0);
   document.getElementById("lcdfx-toggle").classList.toggle("active", state.enabled);
   document.getElementById("lcdfx-toggle").querySelector(".led").className = "led" + (state.enabled ? " led-on" : "");
   document.getElementById("lcdfx-toggle-text").textContent = state.enabled ? "On" : "Off";
