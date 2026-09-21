@@ -83,12 +83,31 @@ var (
 	uiMu     sync.Mutex
 	uiOn     bool
 	lastPage = -1
+
+	// focused gates every Push3-sourced control/pad event in main.go's
+	// Fixed() — see docs/push-hub-proposal.md. Defaults true so a hack
+	// run without push-hub installed is unaffected; push-hub's
+	// POST /api/focus (webserver.go's handleFocus) is the only thing
+	// that ever sets it false.
+	focused = true
 )
 
 func uiIsOn() bool {
 	uiMu.Lock()
 	defer uiMu.Unlock()
 	return uiOn
+}
+
+func isFocused() bool {
+	uiMu.Lock()
+	defer uiMu.Unlock()
+	return focused
+}
+
+func setFocused(v bool) {
+	uiMu.Lock()
+	focused = v
+	uiMu.Unlock()
 }
 
 // renderTopTabs draws the page names across the top of the screen — spare
@@ -291,10 +310,25 @@ func renderWaitingScreen(msg string) *image.NRGBA {
 // toggleUI flips the on-screen param UI, same shape as push-hack-xenia's
 // own — plus clearing pad LEDs on the way out, since Xenia never lit pads
 // at all.
+// toggleUI flips the on-screen param UI — local Shift+Device's own path
+// (chord.go). setUI does the actual work; both this and push-hub's
+// POST /api/focus (webserver.go's handleFocus) call it directly rather
+// than duplicating the takeover logic.
 func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter) {
 	uiMu.Lock()
-	uiOn = !uiOn
-	on := uiOn
+	next := !uiOn
+	uiMu.Unlock()
+	setUI(pmURL, next, st, io, astatus, seq, level)
+}
+
+// setUI enters takeover mode (push-manager's display + MIDI intercept,
+// current page's LEDs, an immediate frame) or releases all three back to
+// the native Push UI / normal Live routing — an absolute set, not a
+// toggle, so two independent callers (local Shift+Device and push-hub's
+// HTTP-driven focus) never fight over one boolean's parity.
+func setUI(pmURL string, on bool, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter) {
+	uiMu.Lock()
+	uiOn = on
 	uiMu.Unlock()
 
 	client := pmclient.New(pmURL)

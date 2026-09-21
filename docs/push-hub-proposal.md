@@ -1,10 +1,15 @@
 # push-hub: a launcher/picker for multiple Push 3 synth hacks
 
-Status: **proposal, not implemented.** Written for handoff to another
-agent/session to build. Nothing in `push-hub/` exists yet — this doc is
-the entire spec. Read `docs/environment-and-deploy.md`,
-`docs/push-hack-framework-notes.md`, and `docs/monomachine-port-notes.md`
-first for the framework/repo context this assumes.
+Status: **implemented** — `push-hub/` (registry-driven picker, no DSP/
+audio of its own) plus the contract patches in `push-hack-xenia/` and
+`push-hack-mm/` (`/api/focus`, the `focused` gate, local Shift+Device
+standdown). Not yet run on real Push hardware — this sandbox has no ALSA
+device or push-manager to test against, only `go build`/`go vet`/gofmt
+validation. See "Deviations from this proposal, as actually built" at the
+end for the places the real build differs from the spec below. Read
+`docs/environment-and-deploy.md`, `docs/push-hack-framework-notes.md`, and
+`docs/monomachine-port-notes.md` first for the framework/repo context this
+assumes.
 
 ## Naming convention
 
@@ -200,3 +205,51 @@ Per-hack patch (both `push-hack-xenia` and `push-hack-mm`):
 - No auth on any of this (matches every existing hack's own HTTP API) —
   fine as long as everything stays bound to localhost; flag loudly if
   that ever changes.
+
+## Deviations from this proposal, as actually built
+
+Recorded here rather than silently drifting from the spec above, since
+that's exactly the kind of thing this doc's own sibling docs warn against
+re-discovering later.
+
+- **Audio IS part of the focus lifecycle — this proposal's "deliberately
+  not" call was overridden.** The user asked for pedalboard semantics
+  explicitly: an unfocused hack should be "not connected to the output,"
+  not just muted at the UI/MIDI layer. `push-hack-xenia`/`push-hack-mm`'s
+  `audiosession.go` now zero the PCM write buffer (and hold the VU meter
+  at 0) whenever `focused` is false, while still calling
+  `bridge_plugin_render` every block so voice/envelope state doesn't jump
+  when refocused — a true output bypass, not a fader pulled down in Live.
+  If this ever needs reverting to the original "always mixed, focus is
+  UI/input-only" design, that's a one-line revert in each hack's
+  `audiosession.go` (`isFocused()` guard around the `wide` copy) — the
+  MIDI/display focus gate is unaffected either way.
+- **Process start/stop was added, beyond focus arbitration.** The user
+  also wanted the hub able to start/stop each hack's underlying service
+  directly (bottom-screen button 2 in the menu), not just arbitrate focus
+  between already-running processes. Implemented via the standard
+  `service <name> start|stop` wrapper (`push-hub/src/focus.go`).
+  **Unverified assumption**: `hacks.json`'s `"service"` field is set to
+  each hack's own binary name (`push-xenia`/`push-mm`) as the best
+  available guess at push-catalog's init.d script naming — this repo's
+  docs confirm start-stop-daemon is the real mechanism
+  (`docs/push-hack-framework-notes.md`) but not the exact script name per
+  hack. Fix `hacks.json` if a real install names it differently; the
+  mechanism itself should still be right.
+- **No browser UI for push-hub itself in v1** — this proposal already
+  called that optional. `push-hub` exposes `GET /api/hub/state` (a plain
+  JSON dump of the same status the on-screen menu shows) for scripted/
+  curl-based checking without physical hardware, but no embedded HTML
+  page. Add one later the same way `push-hack-xenia`/`push-hack-mm` embed
+  theirs (`//go:embed ui/index.html`) if it's ever wanted.
+- **Menu input is a scrolling list + D-Pad Up/Down + 2 bottom-screen
+  buttons** (FOCUS, START/STOP), per this doc's own suggestion, not
+  top-screen tabs — chosen because it scales past 8 registered hacks and
+  because "select a row, act on it" maps directly onto the two actions
+  (focus, start/stop) the user asked for.
+- **Not tested on real Push hardware or against a running push-manager**
+  — this sandbox has neither. Validated with `go build`, `go vet`, and
+  `gofmt` on all three modules (`push-hub`, `push-hack-xenia`,
+  `push-hack-mm`) only. Treat the actual on-screen layout, LED behavior,
+  and the `service`-name assumption above as needing a real first-boot
+  check before relying on this.

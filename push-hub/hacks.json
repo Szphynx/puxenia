@@ -1,0 +1,14 @@
+[
+  {
+    "id": "xenia",
+    "label": "puXenia",
+    "api": "http://localhost:7707",
+    "service": "push-xenia"
+  },
+  {
+    "id": "mm",
+    "label": "puMMa",
+    "api": "http://localhost:7708",
+    "service": "push-mm"
+  }
+]

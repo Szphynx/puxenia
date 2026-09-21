@@ -28,11 +28,13 @@ const stateBroadcastInterval = 100 * time.Millisecond
 
 type webServer struct {
 	version string
+	pmURL   string
 	params  *paramState
 	io      *ioState
 	astatus *audioStatus
 	diag    *diagStats
 	seq     *seqState
+	level   *levelMeter
 	ctl     chan<- controlEvent
 	broker  *sse.Broker[[]byte]
 }
@@ -59,6 +61,12 @@ func (ws *webServer) buildState() map[string]any {
 		"panel":       panel,
 		"audio":       map[string]any{"ready": ready, "message": msg},
 		"diag":        map[string]any{"cpuPercent": ws.diag.getCPU(), "activeVoices": ws.diag.getVoices(), "deviceReady": ws.diag.getReady()},
+		// focused/level: push-hub's picker reads these (GET /api/state) to
+		// show this hack as "alive" (VU meter + channel) or greyed out/
+		// disconnected — see docs/push-hub-proposal.md and display.go's
+		// focused var.
+		"focused": isFocused(),
+		"level":   ws.level.get(),
 	}
 }
 
@@ -117,6 +125,25 @@ func (ws *webServer) handleSetParam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleFocus is push-hub's focus/defocus call (docs/push-hub-proposal.md):
+// an absolute on/off, same setUI path local Shift+Device uses (chord.go/
+// display.go), plus the separate focused gate that mutes Push3-sourced
+// pad/CC input (main.go's Fixed()) and this hack's own audio output
+// (audiosession.go's run loop) while defocused. Not gated on hubPresent —
+// if something POSTs here, honor it regardless of the startup probe.
+func (ws *webServer) handleFocus(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	setFocused(body.On)
+	setUI(ws.pmURL, body.On, ws.params, ws.io, ws.astatus, ws.seq, ws.level)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (ws *webServer) handleIO(w http.ResponseWriter, r *http.Request) {
@@ -296,17 +323,18 @@ func (ws *webServer) handleBank(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func runWebServer(port int, version string, params *paramState, io *ioState, astatus *audioStatus, diag *diagStats,
-	seq *seqState, ctl chan<- controlEvent, shutdown <-chan struct{}) {
+func runWebServer(port int, version string, pmURL string, params *paramState, io *ioState, astatus *audioStatus, diag *diagStats,
+	seq *seqState, level *levelMeter, ctl chan<- controlEvent, shutdown <-chan struct{}) {
 
 	broker := sse.NewBroker[[]byte](8, false)
-	ws := &webServer{version: version, params: params, io: io, astatus: astatus, diag: diag, seq: seq, ctl: ctl, broker: broker}
+	ws := &webServer{version: version, pmURL: pmURL, params: params, io: io, astatus: astatus, diag: diag, seq: seq, level: level, ctl: ctl, broker: broker}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/state", ws.handleState)
 	mux.HandleFunc("GET /api/params", ws.handleParams)
 	mux.HandleFunc("GET /sse/state", ws.handleSSE)
 	mux.HandleFunc("POST /api/params/{key}", ws.handleSetParam)
+	mux.HandleFunc("POST /api/focus", ws.handleFocus)
 	mux.HandleFunc("GET /api/io", ws.handleIO)
 	mux.HandleFunc("POST /api/io/midi", ws.handleSetIO(ws.io.SetMIDIByIndex))
 	mux.HandleFunc("POST /api/io/pcm", ws.handleSetIO(ws.io.SetDeviceByIndex))

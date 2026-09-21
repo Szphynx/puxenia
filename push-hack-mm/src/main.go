@@ -50,6 +50,11 @@ const (
 	cardID                = "Audio"
 	defaultPushManagerURL = "http://localhost:7701"
 	defaultWebPort        = 7708
+	// defaultHubURL — push-hub's own well-known local port (see
+	// docs/push-hub-proposal.md). Probed once at startup (chord.go's
+	// probeHub) to decide whether this hack's own Shift+Device binding
+	// should stand down in favor of hub-driven focus.
+	defaultHubURL = "http://localhost:7709"
 
 	steadyPollInterval = 2 * time.Second
 	waitPollInterval   = time.Second
@@ -107,6 +112,16 @@ type midiHandler struct {
 func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 	fromPush3 := src.Client == alsaseq.Push3ClientDefault
 
+	// push-hub arbitrates which hack currently reads Push3's own pads/CCs
+	// (docs/push-hub-proposal.md) — every fromPush3 branch below (control
+	// surface AND pad notes) is a no-op while this hack isn't the focused
+	// one. Defaults true (see display.go's focused var), so a hack run
+	// without push-hub installed behaves exactly as before this existed.
+	// External gear/Live (fromPush3==false) is never gated here.
+	if fromPush3 && !isFocused() {
+		return
+	}
+
 	if evType == alsaseq.EvController {
 		if !fromPush3 || src.Port != alsaseq.Push3PortDefault {
 			return
@@ -139,7 +154,15 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 			// same way: directly here, never through ctlCh, since toggleUI
 			// only talks to push-manager over HTTP and never touches the
 			// DSP plugin (no render-goroutine restriction applies to it).
-			go toggleUI(h.pmURL, h.params, h.io, h.astatus, h.seq, h.level)
+			// Suppressed when push-hub is present, same as chord.go's own
+			// Shift+Device standdown -- otherwise this would flip uiOn/
+			// focused locally without telling the hub, leaving its menu
+			// showing this hack as still-focused after the screen's
+			// already back to native Push/Live. Shift+Device (hub-owned)
+			// is the only way back to the picker once hub is installed.
+			if !hubPresent {
+				go toggleUI(h.pmURL, h.params, h.io, h.astatus, h.seq, h.level)
+			}
 			return
 		case cc >= push3.CCScreenBot1 && cc <= push3.CCScreenBot8 && val == 127:
 			ev = controlEvent{kind: ctlBottomPress, idx: int(cc) - push3.CCScreenBot1}
@@ -324,6 +347,16 @@ func runSupervised() {
 		pmURL = defaultPushManagerURL
 	}
 
+	// One-time probe (see chord.go's doc) — if push-hub is already up,
+	// this hack's own Shift+Device binding stands down and focus becomes
+	// entirely hub-driven via POST /api/focus (webserver.go). Not
+	// re-checked live: installing push-hub after this hack is already
+	// running needs a restart of this hack to take effect.
+	hubPresent = probeHub(defaultHubURL)
+	if hubPresent {
+		log.Printf("push-hub detected at %s — local Shift+Device disabled, focus is hub-controlled", defaultHubURL)
+	}
+
 	dspPath := filepath.Join(hackDir, "dsp.so")
 	moduleDir := filepath.Join(hackDir, "module")
 
@@ -380,7 +413,7 @@ func runSupervised() {
 		log.Printf("loading %s for web UI port: %v (defaulting to %d)", *configPath, err, defaultWebPort)
 		hcfg.Port = defaultWebPort
 	}
-	go runWebServer(hcfg.Port, hcfg.Version, params, io, astatus, diag, seq, ctlCh, shutdown)
+	go runWebServer(hcfg.Port, hcfg.Version, pmURL, params, io, astatus, diag, seq, level, ctlCh, shutdown)
 
 	go watchMMPort(rt, handler, shutdown)
 
