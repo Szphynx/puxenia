@@ -1,0 +1,658 @@
+<title>Monomachine Console</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#f5f3ee;
+    --surface:#ffffff;
+    --surface-2:#ece9e1;
+    --text:#18181a;
+    --text-dim:#6b6a63;
+    --border:#ddd8cc;
+    --accent:#2f6e63;
+    --accent-ink:#f2f7f5;
+
+    /* Fixed hardware tokens: these represent an always-dark physical
+       device (Push 3's chassis + the Monomachine port's own on-screen
+       theme, lifted from push-hack-mm/src/display.go's mmChassis/mmInk/
+       mmGreen/mmRed/mmAmber constants) — they do not participate in the
+       page's light/dark theme, the same way a product photo wouldn't. */
+    --hw-body:#242426;
+    --hw-body-hi:#2e2e31;
+    --hw-well:#111113;
+    --hw-lcd:#141416;
+    --hw-ink:#d8d8d0;
+    --hw-ink-dim:#6f6f6a;
+    --hw-green:#3ce064;
+    --hw-red:#e83c3c;
+    --hw-amber:#ffb030;
+    --hw-led-off:#3a3a3d;
+    --hw-pad-off:#0e0e10;
+    --hw-pad-off-dim:#0a0a0b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#111214;
+      --surface:#191a1d;
+      --surface-2:#212226;
+      --text:#eceae3;
+      --text-dim:#9b9a94;
+      --border:#2c2d31;
+      --accent:#5fd0b3;
+      --accent-ink:#0c1a16;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#111214;
+    --surface:#191a1d;
+    --surface-2:#212226;
+    --text:#eceae3;
+    --text-dim:#9b9a94;
+    --border:#2c2d31;
+    --accent:#5fd0b3;
+    --accent-ink:#0c1a16;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:"IBM Plex Sans",system-ui,sans-serif;
+    padding-inline:20px;
+    padding-block:28px 60px;
+  }
+  .wrap{max-width:1080px;margin:0 auto;}
+
+  header{margin-bottom:28px;}
+  .eyebrow{
+    font-family:"IBM Plex Mono",monospace;
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin:0 0 10px;
+  }
+  h1{
+    font-family:"Big Shoulders Display",sans-serif;
+    font-weight:800;
+    font-size:clamp(32px,5vw,52px);
+    line-height:.98;
+    letter-spacing:-.01em;
+    margin:0 0 12px;
+    text-wrap:balance;
+  }
+  header p{
+    max-width:62ch;
+    color:var(--text-dim);
+    font-size:15px;
+    line-height:1.55;
+    margin:0;
+  }
+  header p b{color:var(--text);font-weight:600;}
+
+  /* ---------- transport strip (bank / track / UI state) ---------- */
+  .transport{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:10px;
+    margin:22px 0 14px;
+    font-family:"IBM Plex Mono",monospace;
+    font-size:12px;
+  }
+  .chip{
+    display:inline-flex;align-items:center;gap:7px;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:20px;
+    padding:6px 12px;
+    color:var(--text-dim);
+  }
+  .chip b{color:var(--text);font-weight:600;letter-spacing:.03em;}
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:var(--hw-led-off);}
+  .chip .dot.on{background:var(--hw-green);box-shadow:0 0 6px var(--hw-green);}
+  .btnrow{display:flex;gap:6px;}
+  .stepper{
+    display:inline-flex;align-items:center;gap:2px;
+    background:var(--surface);border:1px solid var(--border);border-radius:20px;overflow:hidden;
+  }
+  .stepper button{
+    appearance:none;border:none;background:transparent;color:var(--text);
+    font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:600;
+    padding:6px 11px;cursor:pointer;
+  }
+  .stepper button:hover{background:var(--surface-2);}
+  .stepper span{font-size:11px;color:var(--text-dim);padding:0 4px;white-space:nowrap;}
+
+  /* ---------- the hardware mockup ---------- */
+  .unit{
+    background:var(--hw-body);
+    border-radius:18px;
+    padding:22px 22px 26px;
+    box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 24px 60px -30px rgba(0,0,0,.55);
+    margin-top:6px;
+  }
+  .unit-label{
+    display:flex;justify-content:space-between;align-items:baseline;
+    font-family:"IBM Plex Mono",monospace;
+    color:var(--hw-ink-dim);
+    font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    margin-bottom:14px;
+  }
+  .unit-label span:last-child{color:var(--hw-ink-dim);}
+
+  /* encoders */
+  .encoders{
+    display:grid;
+    grid-template-columns:repeat(8,1fr);
+    gap:6px;
+    margin-bottom:8px;
+  }
+  .encoder{display:flex;flex-direction:column;align-items:center;gap:5px;}
+  .encoder svg{width:38px;height:38px;}
+  .encoder .ename{
+    font-family:"IBM Plex Mono",monospace;
+    font-size:8.5px;letter-spacing:.02em;color:var(--hw-ink-dim);
+    text-align:center;line-height:1.25;height:22px;overflow:hidden;
+  }
+
+  /* physical button strips (LED only, no text on the device itself) */
+  .ledrow{
+    display:grid;grid-template-columns:repeat(8,1fr);gap:6px;
+    margin:2px 0;
+  }
+  .led{
+    height:6px;border-radius:3px;background:var(--hw-led-off);
+    cursor:pointer;transition:background .1s;
+  }
+  .led.dim{background:#57544a;}
+  .led.on{background:var(--hw-ink);}
+  .led:hover{filter:brightness(1.3);}
+
+  /* LCD */
+  .screen{
+    background:var(--hw-lcd);
+    border-radius:6px;
+    margin:8px 0 10px;
+    padding:9px 10px 8px;
+    min-height:150px;
+    box-shadow:inset 0 0 0 1px #000, inset 0 0 24px rgba(0,0,0,.55);
+    font-family:"IBM Plex Mono",monospace;
+  }
+  .tabstrip{
+    display:grid;grid-template-columns:repeat(8,1fr);gap:6px;
+    margin-bottom:10px;
+  }
+  .tab{
+    font-size:8.5px;letter-spacing:.03em;text-align:center;
+    padding:3px 2px;border-radius:2px;color:var(--hw-ink-dim);
+    cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .tab.active{background:var(--hw-ink);color:var(--hw-lcd);font-weight:600;}
+  .tab.empty{visibility:hidden;}
+
+  .screen-body{min-height:78px;display:flex;flex-direction:column;justify-content:center;}
+
+  /* knob-grid page content */
+  .kgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;align-items:end;}
+  .kcell{display:flex;flex-direction:column;align-items:center;gap:4px;}
+  .kval{font-size:15px;font-weight:600;line-height:1;}
+  .kbar{width:60%;height:3px;background:#2a2c2e;border-radius:2px;overflow:hidden;}
+  .kbar i{display:block;height:100%;border-radius:2px;background:var(--hw-ink);}
+  .kbar i.accent-green{background:var(--hw-green);}
+  .kbar i.accent-amber{background:var(--hw-amber);}
+  .kmute{font-size:11px;font-weight:700;letter-spacing:.05em;padding:3px 7px;border-radius:3px;background:#242628;color:var(--hw-green);}
+  .kmute.on{background:var(--hw-red);color:#2a0505;}
+  .spare-note{color:var(--hw-ink-dim);font-size:11px;text-align:center;letter-spacing:.04em;}
+
+  /* seq page content (mini readout inside the LCD) */
+  .seqhead{display:flex;justify-content:space-between;font-size:10px;color:var(--hw-ink-dim);margin-bottom:6px;}
+  .seqhead .live{color:var(--hw-green);}
+  .seqmini{display:flex;flex-direction:column;gap:3px;}
+  .seqmini-row{display:flex;align-items:center;gap:5px;}
+  .seqmini-row .tl{width:16px;font-size:9px;color:var(--hw-ink-dim);}
+  .seqmini-row.cur .tl{color:var(--hw-amber);font-weight:700;}
+  .seqmini-steps{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;flex:1;}
+  .seqmini-steps i{display:block;height:8px;border-radius:1px;background:#2a2c2e;}
+  .seqmini-steps i.on{background:var(--hw-green);}
+  .seqmini-steps i.on.red{background:var(--hw-red);}
+  .seqmini-steps i.on.amber{background:var(--hw-amber);}
+
+  /* settings page content */
+  .cols{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;font-size:9.5px;}
+  .col h4{margin:0 0 5px;font-size:8.5px;letter-spacing:.06em;color:var(--hw-ink-dim);font-weight:500;}
+  .col div{color:var(--hw-ink-dim);padding:1.5px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .col div.sel{color:var(--hw-ink);}
+  .col div.sel::before{content:"> ";}
+
+  .bottomstrip{
+    display:grid;grid-template-columns:repeat(8,1fr);gap:6px;
+    margin-top:8px;padding-top:6px;border-top:1px solid #232527;
+  }
+  .bottomstrip span{
+    font-size:8px;text-align:center;color:var(--hw-ink-dim);letter-spacing:.02em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+
+  /* d-pad / track row */
+  .midrow{
+    display:flex;align-items:center;justify-content:center;gap:18px;
+    margin:12px 0 14px;
+    font-family:"IBM Plex Mono",monospace;
+  }
+  .dpad{display:grid;grid-template-columns:repeat(3,20px);grid-template-rows:repeat(3,20px);gap:2px;}
+  .dpad button{
+    appearance:none;border:none;border-radius:3px;background:var(--hw-body-hi);color:var(--hw-ink-dim);
+    font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  }
+  .dpad button:hover{background:#38383c;color:var(--hw-ink);}
+  .dpad button.mid{visibility:hidden;}
+  .track-readout{font-size:11px;color:var(--hw-ink);letter-spacing:.04em;}
+  .track-readout b{color:var(--hw-amber);}
+
+  /* pad grid */
+  .padmode-label{
+    text-align:center;font-family:"IBM Plex Mono",monospace;font-size:10px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--hw-ink-dim);margin-bottom:8px;
+  }
+  .padmode-label b{color:var(--hw-amber);}
+  .padgrid{
+    display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);
+    gap:5px;aspect-ratio:1/1;max-width:420px;margin:0 auto;
+    background:var(--hw-well);padding:10px;border-radius:8px;
+  }
+  .pad{
+    border-radius:3px;background:var(--hw-pad-off);
+    display:flex;align-items:center;justify-content:center;
+    font-family:"IBM Plex Mono",monospace;font-size:8px;color:rgba(255,255,255,.35);
+    cursor:default;
+    transition:background .08s;
+  }
+  .pad.seqmode{cursor:pointer;}
+  .pad.seqmode:hover{filter:brightness(1.25);}
+  .pad.off-other{background:var(--hw-pad-off-dim);}
+  .pad.on{background:var(--hw-green);color:#04170a;}
+  .pad.on.red{background:var(--hw-red);color:#210505;}
+  .pad.on.amber{background:var(--hw-amber);color:#241701;}
+  .pad.mute-off{background:var(--hw-pad-off);}
+  .pad.mute-on{background:var(--hw-red);}
+  .pad.reserved{background:var(--hw-well);}
+
+  .caption{
+    text-align:center;color:var(--hw-ink-dim);font-family:"IBM Plex Mono",monospace;
+    font-size:10.5px;margin-top:14px;letter-spacing:.02em;
+  }
+  .caption b{color:var(--hw-ink);}
+
+  footnote{
+    display:block;color:var(--text-dim);font-size:11.5px;text-align:center;margin-top:10px;
+  }
+
+  /* ---------- reference legend ---------- */
+  .legend{
+    margin-top:40px;
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:1px;
+    background:var(--border);
+    border:1px solid var(--border);
+    border-radius:10px;
+    overflow:hidden;
+  }
+  .legend-cell{background:var(--surface);padding:18px 20px;}
+  .legend-cell h3{
+    font-family:"IBM Plex Mono",monospace;
+    font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 10px;
+  }
+  .legend-cell ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;}
+  .legend-cell li{font-size:13px;line-height:1.45;color:var(--text-dim);}
+  .legend-cell li b{color:var(--text);font-weight:600;}
+  .legend-cell li code{
+    font-family:"IBM Plex Mono",monospace;font-size:11.5px;
+    background:var(--surface-2);padding:1px 5px;border-radius:3px;color:var(--text);
+  }
+
+  @media (max-width:720px){
+    .legend{grid-template-columns:1fr;}
+    .encoders,.tabstrip,.ledrow,.bottomstrip{grid-template-columns:repeat(4,1fr);row-gap:8px;}
+    .kgrid{grid-template-columns:repeat(4,1fr);row-gap:12px;}
+    .cols{grid-template-columns:repeat(2,1fr);row-gap:10px;}
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">push-hack-mm · Push 3 control surface</p>
+    <h1>Monomachine Console</h1>
+    <p>Every page, knob, and pad this port actually drives, laid out to scale and wired up live — click a page tab, flip banks, change track, or tap a step. This mirrors <b>push-hack-mm/src/display.go</b>, <b>params.go</b> and <b>leds.go</b> exactly; nothing here is aspirational.</p>
+  </header>
+
+  <div class="transport">
+    <div class="chip"><span class="dot on"></span> UI <b>ON</b> <span style="opacity:.6">(Shift+Device)</span></div>
+    <div class="stepper" id="bankStepper">
+      <button data-bank="0">◄</button>
+      <span id="bankLabel">BANK 1 / 2</span>
+      <button data-bank="1">►</button>
+    </div>
+    <div class="stepper" id="trackStepper">
+      <button data-trk="-1">▾</button>
+      <span id="trackLabel">TRACK 1/6</span>
+      <button data-trk="1">▴</button>
+    </div>
+    <div class="chip" id="audioChip"><span class="dot on"></span> <b>PHVAudio</b> running</div>
+  </div>
+
+  <div class="unit">
+    <div class="unit-label"><span>ABLETON PUSH 3 — push-mm</span><span>v0.1.0</span></div>
+
+    <div class="encoders" id="encoders"></div>
+    <div class="ledrow" id="topLeds"></div>
+
+    <div class="screen">
+      <div class="tabstrip" id="tabstrip"></div>
+      <div class="screen-body" id="screenBody"></div>
+      <div class="bottomstrip" id="bottomstrip"></div>
+    </div>
+
+    <div class="ledrow" id="botLeds"></div>
+
+    <div class="midrow">
+      <div class="dpad">
+        <button class="mid"></button><button id="dpUp">▲</button><button class="mid"></button>
+        <button id="dpLeft">◀</button><button class="mid"></button><button id="dpRight">▶</button>
+        <button class="mid"></button><button id="dpDown">▼</button><button class="mid"></button>
+      </div>
+      <div class="track-readout">D-Pad ▲▼ selects track — currently <b><span id="dpTrack">1</span>/6</b></div>
+    </div>
+
+    <div class="padmode-label" id="padModeLabel"></div>
+    <div class="padgrid" id="padgrid"></div>
+    <p class="caption" id="padCaption"></p>
+  </div>
+  <footnote>Stylized to scale — not a literal render of Push 3's industrial design.</footnote>
+
+  <div class="legend">
+    <div class="legend-cell">
+      <h3>Knobs</h3>
+      <ul>
+        <li>8 encoders drive the current page's params, always for <b>whichever track is selected</b> — turn one, it sends that param's real Monomachine MIDI CC for that track.</li>
+        <li>On <b>SEQ</b>, encoder 1 is repurposed as <b>BASE CHANNEL</b> (0–15) — no spare SETTINGS column was left for it.</li>
+      </ul>
+    </div>
+    <div class="legend-cell">
+      <h3>Pages</h3>
+      <ul>
+        <li>2 banks × 8 top-screen tabs. <code>SYNTH · AMP · FILTER · EFFECTS · LFO1 · LFO2 · LFO3 · LEVEL</code> cover the 58 real per-track params.</li>
+        <li><code>SEQ</code> and <code>SETTINGS</code> are pinned in both banks, same slot, so they're always one press away.</li>
+      </ul>
+    </div>
+    <div class="legend-cell">
+      <h3>Menus</h3>
+      <ul>
+        <li>SEQ's bottom row: <code>PAGE</code> (steps 1–8 ↔ 9–16), <code>PLAY</code>, <code>STOP</code>, <code>REC</code>.</li>
+        <li>SETTINGS: 4 columns — MIDI IN, AUDIO OUTPUT, AUDIO CHANNEL, MIDI CHANNEL — each its own encoder + commit button.</li>
+      </ul>
+    </div>
+    <div class="legend-cell">
+      <h3>Pads — dual mode</h3>
+      <ul>
+        <li><b>Any other page:</b> pads play the selected track live. Unlit — no LED meaning is assigned outside SEQ.</li>
+        <li><b>SEQ page:</b> rows 0–5 (bottom-up) = tracks 1–6's step grid, row 7 = per-track mute, row 6 reserved. A tap simulates the real Track-select + Trigger-key panel press — mdLib's own sequencer, not a reimplementation.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const TRACKS = 6, STEPS = 8;
+
+// Page data — mirrors push-hack-mm/src/params.go's bankPageNames/bankParamPages
+// exactly, including which knobs get the green ("filter_") / amber ("fx_"/"lfo")
+// accent from display.go's knobColor().
+const PAGES = [[
+  { name:"SYNTH", knobs:[
+    {n:"Synthesis A",v:88},{n:"Synthesis B",v:42},{n:"Synthesis C",v:15},{n:"Synthesis D",v:127},
+    {n:"Synthesis E",v:64},{n:"Synthesis F",v:0},{n:"Synthesis G",v:100},{n:"Synthesis H",v:33}] },
+  { name:"AMP", knobs:[
+    {n:"Attack",v:0},{n:"Hold",v:0},{n:"Decay",v:64},{n:"Release",v:32},
+    {n:"Distortion",v:0},{n:"Volume",v:100},{n:"Pan",v:64},{n:"Portamento",v:0}] },
+  { name:"FILTER", accent:"green", knobs:[
+    {n:"Base",v:100},{n:"Width",v:64},{n:"HP Q",v:0},{n:"LP Q",v:0},
+    {n:"Attack",v:0},{n:"Decay",v:64},{n:"Base Offset",v:64},{n:"Width Offset",v:64}] },
+  { name:"EFFECTS", accent:"amber", knobs:[
+    {n:"EQ Freq",v:64},{n:"EQ Gain",v:64},{n:"Sample Rate Reduction",v:0},{n:"Delay Time",v:0},
+    {n:"Delay Send",v:0},{n:"Delay Feedback",v:0},{n:"Delay Base",v:64},{n:"Delay Width",v:64}] },
+  { name:"LFO 1", accent:"amber", knobs:[
+    {n:"Page",v:0},{n:"Destination",v:0},{n:"Trigger",v:0},{n:"Waveform",v:0},
+    {n:"Multiplier",v:0},{n:"Speed",v:64},{n:"Interlace",v:0},{n:"Depth",v:0}] },
+  { name:"LFO 2", accent:"amber", knobs:[
+    {n:"Page",v:0},{n:"Destination",v:0},{n:"Trigger",v:0},{n:"Waveform",v:0},
+    {n:"Multiplier",v:0},{n:"Speed",v:64},{n:"Interlace",v:0},{n:"Depth",v:0}] },
+  { name:"SEQ", special:"seq" },
+  { name:"SETTINGS", special:"settings" },
+],[
+  { name:"LFO 3", accent:"amber", knobs:[
+    {n:"Page",v:0},{n:"Destination",v:0},{n:"Trigger",v:0},{n:"Waveform",v:0},
+    {n:"Multiplier",v:0},{n:"Speed",v:64},{n:"Interlace",v:0},{n:"Depth",v:0}] },
+  { name:"LEVEL", knobs:[{n:"Level",v:100},{n:"Mute",v:0,mute:true}] },
+  { name:"", spare:true }, { name:"", spare:true }, { name:"", spare:true }, { name:"", spare:true },
+  { name:"SEQ", special:"seq" },
+  { name:"SETTINGS", special:"settings" },
+]];
+
+const IO = {
+  midi:["> Ableton Push 3 (User Port)","Xenia MIDI In","Monomachine MIDI In"],
+  device:["> PHVAudio (hw:2,0)","Built-in Audio (hw:0,0)"],
+  channel:["> Ch 1-2","Ch 3-4","Ch 5-6"],
+  recv:["> OMNI","Ch 1","Ch 2","Ch 3"],
+};
+
+// Demo pattern for the SEQ page — one plausible 16-step programming
+// session, not real user data (there's no hardware to read one from).
+let steps = [
+  [1,0,1,0,1,0,1,0, 0,0,1,0,0,0,0,0],
+  [1,0,1,0,1,0,1,0, 1,0,1,0,1,0,1,0],
+  [0,0,0,0,1,0,0,0, 0,0,0,0,1,0,0,0],
+  [0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0],
+  [1,0,0,1,0,0,1,0, 1,0,0,1,0,0,1,0],
+  [0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0],
+];
+let mutes = [false,false,false,true,false,false];
+let stepPage = 0, playing = true, recording = false;
+
+let bank = 0, slot = 6, track = 0; // opens on SEQ — the page/pad-mode this mockup exists to show
+
+function currentPage(){ return PAGES[bank][slot]; }
+
+function svgArc(v){
+  const frac = Math.max(0, Math.min(1, v/127));
+  const r = 15, c = 2*Math.PI*r;
+  return `<svg viewBox="0 0 38 38">
+    <circle cx="19" cy="19" r="${r}" fill="none" stroke="#2a2c2e" stroke-width="4"/>
+    <circle cx="19" cy="19" r="${r}" fill="none" stroke="var(--hw-ink)" stroke-width="4"
+      stroke-dasharray="${c}" stroke-dashoffset="${c*(1-frac*0.75)}" stroke-linecap="round"
+      transform="rotate(135 19 19)"/>
+  </svg>`;
+}
+
+function render(){
+  const p = currentPage();
+
+  // bank / track chips
+  document.getElementById("bankLabel").textContent = `BANK ${bank+1} / 2`;
+  document.getElementById("trackLabel").textContent = `TRACK ${track+1}/6`;
+  document.getElementById("dpTrack").textContent = track+1;
+
+  // encoders (blank on seq/settings/spare, BASE CHANNEL slot 1 on seq)
+  const enc = document.getElementById("encoders");
+  enc.innerHTML = "";
+  for(let i=0;i<8;i++){
+    let label = "", val = 0;
+    if(p.special==="seq" && i===0){ label = "BASE CH"; val = 53; } // demo: channel 10 of 0-15, arced against a 127 dial same as any other knob
+    else if(p.knobs && p.knobs[i]){ label = p.knobs[i].n; val = p.knobs[i].v; }
+    enc.innerHTML += `<div class="encoder">${svgArc(val)}<div class="ename">${label}</div></div>`;
+  }
+
+  // top LEDs = page tabs, lit = active, dim = other real page, off = spare
+  const topLeds = document.getElementById("topLeds");
+  const tabstrip = document.getElementById("tabstrip");
+  topLeds.innerHTML = ""; tabstrip.innerHTML = "";
+  PAGES[bank].forEach((pg,i)=>{
+    const cls = pg.spare ? "" : (i===slot ? "on" : "dim");
+    topLeds.innerHTML += `<div class="led ${cls}" data-slot="${i}" title="${pg.name||'—'}"></div>`;
+    if(pg.spare) tabstrip.innerHTML += `<div class="tab empty"></div>`;
+    else tabstrip.innerHTML += `<div class="tab ${i===slot?'active':''}" data-slot="${i}">${pg.name}</div>`;
+  });
+
+  // bottom LEDs: lit set depends on page
+  const botLeds = document.getElementById("botLeds");
+  let litSet = [];
+  if(p.special==="seq") litSet=[0,1,2,3];
+  else if(p.special==="settings") litSet=[0,2,4,6];
+  botLeds.innerHTML = "";
+  for(let i=0;i<8;i++) botLeds.innerHTML += `<div class="led ${litSet.includes(i)?'on':''}"></div>`;
+
+  // screen body + bottom strip text
+  const body = document.getElementById("screenBody");
+  const bstrip = document.getElementById("bottomstrip");
+  bstrip.innerHTML = "";
+
+  if(p.special==="seq"){
+    body.innerHTML = seqScreenHTML();
+    ["PAGE","PLAY","STOP","REC","","","",""].forEach(l=>bstrip.innerHTML+=`<span>${l}</span>`);
+  } else if(p.special==="settings"){
+    body.innerHTML = settingsScreenHTML();
+    for(let i=0;i<8;i++) bstrip.innerHTML += `<span></span>`;
+  } else if(p.spare){
+    body.innerHTML = `<div class="spare-note">— unassigned page —</div>`;
+    for(let i=0;i<8;i++) bstrip.innerHTML += `<span></span>`;
+  } else {
+    body.innerHTML = knobScreenHTML(p);
+    p.knobs.forEach(k=>bstrip.innerHTML += `<span>${k.n.toUpperCase()}</span>`);
+    for(let i=p.knobs.length;i<8;i++) bstrip.innerHTML += `<span></span>`;
+  }
+
+  // pad grid mode
+  document.getElementById("padModeLabel").innerHTML = p.special==="seq"
+    ? `SEQ mode — pads edit <b>track ${track+1}</b>'s pattern`
+    : `PLAY mode — pads play <b>track ${track+1}</b> live`;
+  document.getElementById("padCaption").innerHTML = p.special==="seq"
+    ? `Rows 1–6 = tracks · row 8 = mute · tap a step to toggle it`
+    : `Outside SEQ, pads are unlit — they just play notes. Open SEQ to see them light up.`;
+  renderPads(p.special==="seq");
+}
+
+function knobScreenHTML(p){
+  return `<div class="kgrid">${p.knobs.map(k=>{
+    if(k.mute){
+      return `<div class="kcell"><div class="kmute ${k.v?'on':''}">${k.v?'MUTE':'OFF'}</div></div>`;
+    }
+    const cls = p.accent==="green"?"accent-green":p.accent==="amber"?"accent-amber":"";
+    return `<div class="kcell"><div class="kval">${k.v}</div><div class="kbar"><i class="${cls}" style="width:${(k.v/127*100)|0}%"></i></div></div>`;
+  }).join("")}</div>`;
+}
+
+function seqScreenHTML(){
+  const off = stepPage*8;
+  let rows = "";
+  for(let t=0;t<TRACKS;t++){
+    const cur = t===track;
+    let cells = "";
+    for(let c=0;c<8;c++){
+      const on = !!steps[t][off+c];
+      const cls = on ? (cur && c===2 ? "on red" : cur && c===6 ? "on amber" : "on") : "";
+      cells += `<i class="${cls}"></i>`;
+    }
+    rows += `<div class="seqmini-row ${cur?'cur':''}"><span class="tl">T${t+1}${mutes[t]?'·M':''}</span><div class="seqmini-steps">${cells}</div></div>`;
+  }
+  return `<div class="seqhead"><span>STEPS ${off+1}-${off+8}</span><span class="live">${playing?'▸ PLAYING':''}${recording?'  ● REC':''}</span></div>
+    <div class="seqmini">${rows}</div>`;
+}
+
+function settingsScreenHTML(){
+  const col = (title, rows) => `<div class="col"><h4>${title}</h4>${rows.map(r=>`<div class="${r[0]==='>'?'sel':''}">${r.replace('> ','')}</div>`).join("")}</div>`;
+  return `<div class="cols">
+    ${col("MIDI IN", IO.midi)}
+    ${col("AUDIO OUTPUT", IO.device)}
+    ${col("AUDIO CHANNEL", IO.channel)}
+    ${col("MIDI CHANNEL", IO.recv)}
+  </div>`;
+}
+
+function renderPads(seqMode){
+  const grid = document.getElementById("padgrid");
+  grid.innerHTML = "";
+  const off = stepPage*8;
+  // row 7 (top, index 7) down to row 0 (bottom) — CSS grid fills top-first,
+  // and Push numbers pad rows bottom-up, so row index = 7 - gridRow.
+  for(let gridRow=0; gridRow<8; gridRow++){
+    const row = 7-gridRow;
+    for(let col=0; col<8; col++){
+      let cls = "pad", label="";
+      if(seqMode){
+        cls += " seqmode";
+        if(row<TRACKS){
+          const on = !!steps[row][off+col];
+          if(row===track){
+            // Selected track's row: live readback (green/red/amber from
+            // FrontPanel::LedColor) — same demo accents as the LCD's own
+            // mini-readout above, for the same steps.
+            cls += on ? (col===2?" on red":col===6?" on amber":" on") : "";
+          } else {
+            cls += on ? " on off-other" : " off-other";
+          }
+        } else if(row===7){
+          if(col<TRACKS){ cls += mutes[col] ? " mute-on" : " mute-off"; label = "M"; }
+          else cls += " reserved";
+        } else {
+          cls += " reserved";
+        }
+      }
+      grid.innerHTML += `<div class="${cls}" data-row="${row}" data-col="${col}">${label}</div>`;
+    }
+  }
+  if(seqMode){
+    grid.querySelectorAll(".pad.seqmode").forEach(el=>{
+      el.addEventListener("click", ()=>{
+        const row = +el.dataset.row, col = +el.dataset.col;
+        if(row<TRACKS){
+          steps[row][off+col] = steps[row][off+col] ? 0 : 1;
+          track = row;
+        } else if(row===7 && col<TRACKS){
+          mutes[col] = !mutes[col];
+        } else return;
+        render();
+      });
+    });
+  }
+}
+
+// -- interactions --
+document.getElementById("bankStepper").addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  bank = +b.dataset.bank; if(slot>=PAGES[bank].length) slot = PAGES[bank].length-1;
+  render();
+});
+document.getElementById("trackStepper").addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  track = Math.max(0, Math.min(TRACKS-1, track + (+b.dataset.trk)));
+  render();
+});
+["dpUp","dpDown"].forEach(id=>{
+  document.getElementById(id).addEventListener("click", ()=>{
+    track = Math.max(0, Math.min(TRACKS-1, track + (id==="dpUp"?1:-1)));
+    render();
+  });
+});
+document.getElementById("dpLeft").addEventListener("click", ()=>{ bank=0; if(slot>=PAGES[bank].length) slot=PAGES[bank].length-1; render(); });
+document.getElementById("dpRight").addEventListener("click", ()=>{ bank=1; if(slot>=PAGES[bank].length) slot=PAGES[bank].length-1; render(); });
+
+document.addEventListener("click", e=>{
+  const t = e.target.closest("[data-slot]");
+  if(t){ slot = +t.dataset.slot; if(!PAGES[bank][slot].spare) render(); }
+});
+
+render();
+</script>
