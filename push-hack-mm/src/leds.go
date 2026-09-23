@@ -54,19 +54,13 @@ var (
 	ledOff   = byte(0)
 
 	// Pad palette for SEQ mode — chosen to read clearly against Push's
-	// black pad-well: FrontPanel::LedColor's 4 values (off/green/red/
-	// yellow) map directly to matching named Push colors; the "off but
-	// a valid step slot" dim backdrop and per-track/mute colors are this
-	// host's own UI choice, not derived from real hardware LED colors
-	// (Monomachine's own trig LEDs are red/green/off only — see
-	// mdfrontpanel.h's LedColor doc; Push's fuller RGB palette is used
-	// here purely for this host's own legibility, same spirit as
-	// display.go's Microwave-XT-inspired palette in push-hack-xenia).
+	// black pad-well. Step on/off only (green/dim), driven entirely by
+	// this host's own shadow state (seqState) — see leds.go's
+	// stepLedColor doc for why the plugin's own red/yellow trig-LED
+	// colors (FrontPanel::LedColor) are no longer read for this.
 	padStepOff       = paletteIdx("dgray") // empty step slot, current track's row
 	padStepOffOther  = paletteIdx("off")   // empty step slot, non-current track's row (dimmer still)
 	padStepOn        = paletteIdx("green")
-	padStepOnRed     = paletteIdx("red")
-	padStepOnYellow  = paletteIdx("amber")
 	padTrackSelected = paletteIdx("sky") // unused pad-well tint reserved for a future "track strip" — currently unused, see docs
 	padMuteOn        = paletteIdx("red")
 	padMuteOff       = paletteIdx("dgray")
@@ -156,27 +150,30 @@ func clearPadLEDs() {
 	}
 }
 
-// stepLedColor picks a pad color for step i of track: the CURRENTLY
-// SELECTED track's row trusts the plugin's live readback (globalPanelState,
-// which also reflects playhead flashing during playback — real hardware's
-// own trig LEDs do this too); every other row trusts this host's own
-// shadow (seqState — see seq.go's doc for why there's no hardware
-// readback for a non-selected track's steps).
+// stepLedColor picks a pad color for step i of track. Every row, including
+// the currently selected track's, trusts this host's own shadow (seqState)
+// — NOT the plugin's panel_state live readback (globalPanelState), which
+// this used to trust for the current track only. That readback turned out
+// to not carry real playhead/transport semantics at all (see
+// mm_plugin.cpp's own panel_state comment: "no clearly-transport-meaning
+// bit to read"), so it never animated during playback, and reading it
+// misaligned with this host's own step numbering produced a stuck,
+// contiguous block spanning several step cells instead of individual
+// on/off squares — reported from real hardware as "a weird transparent
+// bar... occluding the view of the steps." The shadow is already the
+// proven-correct source for every OTHER row (seq.go's own doc: this host
+// is the only thing that ever calls toggle_step, so it never drifts), so
+// using it for the selected row too just makes every row behave the same,
+// correctly, instead of carrying one specially-broken row.
 func stepLedColor(seq *seqState, params *paramState, track, step int) byte {
-	current := params.CurrentTrack()
-	if track == current {
-		switch globalPanelState.get().StepColor(step) {
-		case 1:
+	on := seq.StepOn(track, step)
+	if track == params.CurrentTrack() {
+		if on {
 			return padStepOn
-		case 2:
-			return padStepOnRed
-		case 3:
-			return padStepOnYellow
-		default:
-			return padStepOff
 		}
+		return padStepOff
 	}
-	if seq.StepOn(track, step) {
+	if on {
 		return padStepOn
 	}
 	return padStepOffOther

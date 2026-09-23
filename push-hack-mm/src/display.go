@@ -190,6 +190,14 @@ func renderKnobGrid(st *paramState) *image.NRGBA {
 	}
 	text.Draw(img, screenW-70, topStripH+12, trackLabel, mmAmber)
 
+	// Selected track's own tiny activity dot, next to its label — see
+	// trackmeter.go's doc: not a real audio level (this DSP has no
+	// per-track bus to measure), a decaying "has a held note" proxy, so
+	// it's still possible to tell which channel is making sound while
+	// tweaking knobs on a synth-editing page, not just on SEQ.
+	dotCol := lerpColor(mmTrack, mmGreen, globalTrackActivity.level(track))
+	gfx.FillRect(img, screenW-86, topStripH+4, 8, 8, dotCol)
+
 	var bottom [8]widgets.SoftButton
 	for i, c := range cells {
 		if c.slot == nil {
@@ -264,6 +272,20 @@ func renderSeqPage(st *paramState, seq *seqState) *image.NRGBA {
 		if seq.Muted(row) {
 			text.Draw(img, 30, y+rowH-4, "M", mmRed)
 		}
+
+		// Per-track activity meter — see trackmeter.go's doc: bottom-
+		// anchored fill, decaying over trackMeterHold since that track's
+		// last held note, sitting in the gutter between the track label
+		// and the step grid so it doesn't cost the step cells any width.
+		const meterX, meterW = 44, 10
+		meterH := rowH - 6
+		gfx.FillRect(img, meterX, y+2, meterW, meterH, mmTrack)
+		if level := globalTrackActivity.level(row); level > 0 {
+			if filled := int(float64(meterH) * level); filled > 0 {
+				gfx.FillRect(img, meterX, y+2+(meterH-filled), meterW, filled, mmGreen)
+			}
+		}
+
 		for col := 0; col < mmStepsPerPage; col++ {
 			x := 60 + col*stepW
 			led := stepLedColor(seq, st, row, col+offset)
@@ -316,6 +338,22 @@ func dbFrac(peak float64) float64 {
 		return 0
 	}
 	return (db - meterMinDB) / -meterMinDB
+}
+
+// lerpColor blends a toward b by t (0-1, clamped) — used for the knob-grid
+// page's selected-track activity dot (trackmeter.go), a smooth fade
+// instead of a hard on/off flicker for very short trigs.
+func lerpColor(a, b color.NRGBA, t float64) color.NRGBA {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	lerp := func(x, y uint8) uint8 {
+		return uint8(float64(x) + (float64(y)-float64(x))*t)
+	}
+	return color.NRGBA{R: lerp(a.R, b.R), G: lerp(a.G, b.G), B: lerp(a.B, b.B), A: 255}
 }
 
 func itoaSimple(n int) string {
