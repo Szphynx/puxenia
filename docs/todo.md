@@ -8,6 +8,40 @@ more detailed/technical TODOs stay in their own doc (e.g.
 user-facing feature requests and known-buggy areas across the whole
 project.
 
+## push-hub: diagnostics — implemented, not yet hardware-verified
+
+- **CPU load indicator**: the hub's own screen now shows its own process
+  CPU% and an approximate system-wide load (top-right of the menu,
+  `cpu.go`'s `watchCPU`/`GetHubCPU`, sampled every 2s) plus each
+  registered hack's own CPU% (already polled via `/api/state`'s
+  `diag.cpuPercent` in `registry.go`'s `pollOne`, but never actually
+  rendered before — now shown per row, next to the channel label).
+  System-wide load is `/proc/loadavg`'s 1-minute figure scaled by CPU
+  count (`systemLoadPercent`), not a true idle-time-derived percentage —
+  simpler and good enough for a rough on-screen indicator, can read above
+  100 under real overload same as `uptime` would imply.
+- **Chokepoint logging**: `cpu.go`'s `logChokepoint` flags (to the
+  terminal) any single poll of a hack's `/api/state`
+  (`registry.go`'s `pollOne`) or hub display-frame push
+  (`display.go`'s `runHubDisplayLoop`) that takes ≥100ms — well under
+  `pollOne`'s own 300ms client timeout and the display loop's 150ms tick
+  interval, so a flagged call is a real slow spot, not just normal
+  cadence. `push-hack-xenia`/`push-hack-mm` already had comparable
+  logging for their own audio render loop ("SLOW BLOCK" in
+  `audiosession.go`) — this fills the same gap for push-hub, which had
+  neither CPU tracking nor chokepoint logging before.
+
+## push-hub: loading splash — implemented, not yet hardware-verified
+
+Big pulsing letter (`hacks.json`'s new `"splash"` field — "X" for
+puXenia, "MM" for puMMa) shown full-screen on the hub's own display while
+a hack you just STARTed or RESTARTed is still loading (`splash.go`), then
+crossfading back to the normal menu over ~2 seconds once that hack
+reports itself alive (`/api/state`, same poll `renderMenu`'s own
+alive-dot already uses). Not triggered by FOCUS — that's usually handing
+off to an already-running, already-loaded process with nothing to wait
+on, so a splash there would just flash pointlessly.
+
 ## push-hub: process control
 
 - **Restart/Quit buttons — implemented, not yet hardware-verified.**
