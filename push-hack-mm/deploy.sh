@@ -44,7 +44,15 @@ echo "== Stopping any running push-mm on $PUSH_IP =="
 # and aborting this script (deploy.sh's set -e) with no further output.
 # -x matches only the actual push-mm binary's process name, never the
 # shell invoking pkill.
-ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" "pkill -x push-mm || true"
+#
+# Then WAIT for it to actually exit, not just be signaled -- pkill sends
+# SIGTERM and returns immediately, before the target necessarily finished
+# exiting and released its own binary's file handle. The next step scp's
+# over that same binary; losing this race means "Text file busy" (seen
+# for real on push-xenia's own deploy.sh). Poll for up to ~4s before
+# giving up and proceeding anyway.
+ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" \
+  'pkill -x push-mm 2>/dev/null; for i in $(seq 1 20); do pgrep -x push-mm >/dev/null || exit 0; sleep 0.2; done; exit 0' || true
 
 echo "== Copying to $PUSH_IP:$REMOTE_DIR =="
 ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" "mkdir -p $REMOTE_DIR/module/roms"

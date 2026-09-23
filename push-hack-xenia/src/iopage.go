@@ -122,18 +122,30 @@ func (io *ioState) buildMIDIRowsLocked() []midiOptions {
 }
 
 type deviceOption struct {
-	label  string
-	device alsapcm.PlaybackDevice
+	label string
+	// hwDevice is the real, subdevice-specific ALSA device string (e.g.
+	// "hw:Audio,1,1") this row commits -- NOT alsapcm.PlaybackDevice's
+	// own HWDevice(), which always hardcodes subdevice 0 ("returns the
+	// ALSA device string for this device's subdevice 0" -- its own doc).
+	// snd-aloop's loopback devices default to 8 substreams each (this
+	// repo's deploy.sh insmods it with no override), so subdevice 0 is
+	// only ever ONE of several real, independently-openable PCM streams
+	// -- letting push-hack-mm run on a different one (see its own
+	// config.go) needs this picker to actually offer them.
+	hwDevice string
 }
 
-// buildDeviceRowsLocked lists only the loopback card's playback devices —
-// EnumPlaybackDevices returns every playback device on the system,
-// including Push3's own physical hardware output (card "A3"). That card
-// is Live's own audio interface; picking it here means fighting Live for
-// the same device (repeated "Device or resource busy", the session
-// flapping open/closed every few seconds, and no sound) instead of
-// writing to the loopback card Live is meant to read this hack's output
-// from. Same posture as buildMIDIRowsLocked's Push3-only filter above.
+// buildDeviceRowsLocked lists every subdevice of the loopback card's
+// playback devices — EnumPlaybackDevices returns every playback device on
+// the system, including Push3's own physical hardware output (card "A3").
+// That card is Live's own audio interface; picking it here means fighting
+// Live for the same device (repeated "Device or resource busy", the
+// session flapping open/closed every few seconds, and no sound) instead
+// of writing to the loopback card Live is meant to read this hack's
+// output from. Same posture as buildMIDIRowsLocked's Push3-only filter
+// above. One row per subdevice, not one row per device -- see hwDevice's
+// own doc for why that distinction matters now that push-hack-mm also
+// runs against this same card.
 func (io *ioState) buildDeviceRowsLocked() []deviceOption {
 	devices, _ := alsapcm.EnumPlaybackDevices()
 	var out []deviceOption
@@ -141,7 +153,12 @@ func (io *ioState) buildDeviceRowsLocked() []deviceOption {
 		if d.CardID != cardID {
 			continue
 		}
-		out = append(out, deviceOption{label: fmt.Sprintf("%s (%s)", d.Name, d.HWDevice()), device: d})
+		for sub := 0; sub < d.SubdeviceCount; sub++ {
+			out = append(out, deviceOption{
+				label:    fmt.Sprintf("%s (hw:%s,%d,%d)", d.Name, d.CardID, d.Device, sub),
+				hwDevice: fmt.Sprintf("hw:%s,%d,%d", d.CardID, d.Device, sub),
+			})
+		}
 	}
 	return out
 }
@@ -256,7 +273,7 @@ func (io *ioState) commitDevice() {
 	if io.deviceCursor < 0 || io.deviceCursor >= len(rows) {
 		return
 	}
-	io.rt.setPCM(rows[io.deviceCursor].device.HWDevice())
+	io.rt.setPCM(rows[io.deviceCursor].hwDevice)
 	io.saveLocked()
 }
 
@@ -320,7 +337,7 @@ func (io *ioState) DeviceOptions() []ioOption {
 	rows := io.buildDeviceRowsLocked()
 	out := make([]ioOption, len(rows))
 	for i, r := range rows {
-		out[i] = ioOption{Label: r.label, Current: r.device.HWDevice() == curDevice}
+		out[i] = ioOption{Label: r.label, Current: r.hwDevice == curDevice}
 	}
 	return out
 }
@@ -449,7 +466,7 @@ func (io *ioState) render(level *levelMeter) *image.NRGBA {
 	deviceLabels := make([]string, len(deviceRows))
 	for i, r := range deviceRows {
 		mark := "  "
-		if r.device.HWDevice() == curDevice {
+		if r.hwDevice == curDevice {
 			mark = "> "
 		}
 		deviceLabels[i] = mark + r.label

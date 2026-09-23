@@ -234,12 +234,16 @@ func renderMenu() *image.NRGBA {
 	// hack's own hub-detection probe only runs once, at boot -- see
 	// hubPresent's doc in their own chord.go). See focus.go's restartHack.
 	bottom[2] = widgets.SoftButton{Label: "RESTART"}
-	// push-hub's OWN restart/quit, not tied to the cursor row -- kept at
-	// the far right (6/7) so they read as "acting on the hub itself,"
-	// separate from the per-row group at 0-2. See focus.go's
-	// restartSelf/quitSelf.
-	bottom[6] = widgets.SoftButton{Label: "RE-HUB"}
-	bottom[7] = widgets.SoftButton{Label: "QUIT", State: widgets.SoftOff}
+	// push-hub's OWN hide/restart/quit, not tied to the cursor row --
+	// kept at the far right (5-7) so they read as "acting on the hub
+	// itself," separate from the per-row group at 0-2.
+	// ABLETON: hide the menu, hand the screen to Live, keep push-hub
+	// running (Shift+Device brings the menu back) -- different from
+	// QUIT, which actually stops the process. See main.go's
+	// CCScreenBot6 case.
+	bottom[5] = widgets.SoftButton{Label: "ABLETON"}
+	bottom[6] = widgets.SoftButton{Label: "RE-HUB"}                       // see focus.go's restartSelf
+	bottom[7] = widgets.SoftButton{Label: "QUIT", State: widgets.SoftOff} // see focus.go's quitSelf
 	widgets.DrawBotStrip(img, widgets.Default, screenH-botStripH, screenW, screenW/8, botStripH, bottom, "")
 	return img
 }

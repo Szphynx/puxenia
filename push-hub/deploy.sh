@@ -30,8 +30,12 @@ fi
 
 echo "== Stopping any running push-hub on $PUSH_IP =="
 # -x (exact process-name match), not -f — see push-hack-mm/deploy.sh's
-# comment on why -f can self-match the wrapping ssh/bash invocation.
-ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" "pkill -x push-hub || true"
+# comment on why -f can self-match the wrapping ssh/bash invocation. Then
+# WAIT for it to actually exit (poll up to ~4s) before the next step
+# scp's over the same binary -- see push-hack-mm/deploy.sh's comment on
+# the "Text file busy" race this avoids.
+ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" \
+  'pkill -x push-hub 2>/dev/null; for i in $(seq 1 20); do pgrep -x push-hub >/dev/null || exit 0; sleep 0.2; done; exit 0' || true
 
 echo "== Copying to $PUSH_IP:$REMOTE_DIR =="
 ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" "mkdir -p $REMOTE_DIR"

@@ -261,6 +261,27 @@ symptom from a device conflict between two of THIS project's OWN
 processes looks identical to a Live-routing problem from the affected
 hack's own point of view.
 
+**Follow-up, still not fully hardware-confirmed**: the subdevice-1 fix
+above didn't fully resolve it on its own — Live's own routing UI for the
+loopback card only offered individual mono channels to pick from (e.g.
+"channel 3" alone), not a paired stereo input the way puXenia's own
+existing track has, and there was no way to change which device/
+subdevice a hack targets without editing source and rebuilding. Two
+follow-up fixes, both still needing a real hardware pass to confirm they
+actually resolve it:
+- `watchHWParams`'s "not ready" message (both hacks) now shows the
+  actual `bridge_pcm_open` error and device string when that's the real
+  failure, instead of always showing the same generic "go check Live"
+  text regardless of cause — this is what should have surfaced the "Text
+  file busy"-class of real error immediately instead of needing this
+  whole investigation.
+- Both hacks' own on-screen AUDIO OUTPUT picker (`iopage.go`) now lists
+  every subdevice of the loopback card individually, not just subdevice
+  0 (`alsapcm.PlaybackDevice.HWDevice()` always hardcodes subdevice 0 —
+  its own doc says so — so the picker silently could never have offered
+  anything else before this). Nothing about which device a hack uses is
+  hardcoded anymore; it's fully user-selectable from SETTINGS.
+
 ## General debugging directive for this project
 
 Given how many of the above turned out to be "looks completely correct
