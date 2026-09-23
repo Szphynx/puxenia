@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -141,4 +144,72 @@ func startDirect(e hackEntry) error {
 		return fmt.Errorf("direct start: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// restartHackDelay is how long restartHack waits between stopping and
+// starting -- long enough for the old process to actually release its
+// ALSA device / listening port (both hack.json/hacks.json-registered
+// hacks own real hardware handles, not just a socket) before the new one
+// tries to claim them, short enough that RESTART still feels responsive
+// from the menu.
+const restartHackDelay = 1500 * time.Millisecond
+
+// restartHack stops then starts a hack -- the RESTART bottom-screen
+// button (main.go's CCScreenBot3), for the case setServiceRunning's own
+// START/STOP toggle can't fix: a hack that's ALREADY running but started
+// before push-hub did (or before push-hub was ever installed) never
+// re-probes for the hub (each hack's own chord.go does that exactly once
+// at boot -- see hubPresent's doc there) and keeps fighting it for
+// Shift+Device/the screen until restarted. Reuses setServiceRunning for
+// both halves so it gets the same service-then-direct-process fallback.
+func restartHack(e hackEntry) error {
+	if err := setServiceRunning(e, false); err != nil {
+		log.Printf("restart %s: stop: %v", e.ID, err)
+	}
+	time.Sleep(restartHackDelay)
+	return setServiceRunning(e, true)
+}
+
+// restartSelfDelay is how long the freshly-spawned push-hub instance
+// waits before trying to bind its own port -- same reasoning as
+// restartHackDelay, sized for a plain HTTP server + a few pmclient calls
+// (shutdownHubUI) rather than an ALSA device, so it can be shorter.
+const restartSelfDelay = "1"
+
+// restartSelf spawns a fresh, detached push-hub (same binary, same
+// working directory, same "-config hack.json" push-hub/deploy.sh always
+// launches it with) that sleeps restartSelfDelay seconds before starting
+// -- giving this process time to actually release port defaultHubPort --
+// then quits this instance via quitSelf. There is no supervisor process
+// for push-hub to relaunch it the way push-hack-xenia/push-hack-mm's own
+// runSupervisor does (see their main.go) -- if this self-spawn fails for
+// any reason, quitSelf still runs and push-hub stays down until manually
+// restarted; the error is logged, not silently swallowed.
+func restartSelf() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("restart: resolving own executable: %w", err)
+	}
+	dir := filepath.Dir(exe)
+	bin := filepath.Base(exe)
+	cmd := fmt.Sprintf("sleep %s && cd %s && nohup ./%s -config hack.json > push-hub.log 2>&1 &",
+		restartSelfDelay, dir, bin)
+	if out, err := exec.Command("sh", "-c", cmd).CombinedOutput(); err != nil {
+		return fmt.Errorf("restart: spawning replacement: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	log.Printf("push-hub: replacement spawned (starts in %ss), quitting this instance", restartSelfDelay)
+	quitSelf()
+	return nil
+}
+
+// quitSelf asks this process's own SIGINT/SIGTERM handler (main.go) to
+// run its normal graceful shutdown (shutdownHubUI etc.) -- sending the
+// signal to ourselves rather than calling that shutdown path directly so
+// there's exactly one shutdown code path regardless of whether it was
+// triggered by the OS/an operator (a real `kill`/ssh session ending) or
+// by this menu button.
+func quitSelf() {
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		log.Printf("quit: signaling self: %v", err)
+	}
 }

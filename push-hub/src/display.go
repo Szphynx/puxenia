@@ -206,6 +206,17 @@ func renderMenu() *image.NRGBA {
 		startStop = "STOP"
 	}
 	bottom[1] = widgets.SoftButton{Label: startStop}
+	// RESTART (selected row) -- for a hack that's running but fighting the
+	// hub for the screen because it started before the hub did (each
+	// hack's own hub-detection probe only runs once, at boot -- see
+	// hubPresent's doc in their own chord.go). See focus.go's restartHack.
+	bottom[2] = widgets.SoftButton{Label: "RESTART"}
+	// push-hub's OWN restart/quit, not tied to the cursor row -- kept at
+	// the far right (6/7) so they read as "acting on the hub itself,"
+	// separate from the per-row group at 0-2. See focus.go's
+	// restartSelf/quitSelf.
+	bottom[6] = widgets.SoftButton{Label: "RE-HUB"}
+	bottom[7] = widgets.SoftButton{Label: "QUIT", State: widgets.SoftOff}
 	widgets.DrawBotStrip(img, widgets.Default, screenH-botStripH, screenW, screenW/8, botStripH, bottom, "")
 	return img
 }

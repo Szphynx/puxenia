@@ -164,6 +164,18 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 				go toggleUI(h.pmURL, h.params, h.io, h.astatus, h.seq, h.level)
 			}
 			return
+		case cc == push3.CCScreenBot4 && val == 127 && h.params.Page() == pageSettings:
+			// QUIT, SETTINGS page (see iopage.go's render()) -- dispatched
+			// directly, same reasoning as EXIT just above: this is a
+			// process-lifecycle action (selfcontrol.go), nothing to do
+			// with the DSP plugin, so no render-goroutine restriction
+			// applies and it doesn't need to go through ctlCh.
+			go quitSelf()
+			return
+		case cc == push3.CCScreenBot6 && val == 127 && h.params.Page() == pageSettings:
+			// RESTART, SETTINGS page -- see selfcontrol.go's restartSelf.
+			go restartSelf()
+			return
 		case cc >= push3.CCScreenBot1 && cc <= push3.CCScreenBot8 && val == 127:
 			ev = controlEvent{kind: ctlBottomPress, idx: int(cc) - push3.CCScreenBot1}
 		case cc == push3.CCDPadLeft && val == 127:

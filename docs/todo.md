@@ -10,20 +10,43 @@ project.
 
 ## push-hub: process control
 
-- **Restart button**, both on the hub's own menu (a way to restart
-  push-hub itself without needing ssh) and per-instrument (a third
-  bottom-screen action alongside FOCUS/START-STOP, or a long-press/second
-  function on START-STOP). Needed in practice: a hack started before
-  push-hub was running never picks up `hubPresent` (that's a one-time
-  boot-time probe, see each hack's `chord.go`) and fights the hub for the
-  screen until it's restarted — right now the only way to restart one is
-  ssh + `pkill -x` + manually relaunching, or STOP then START from the
-  hub (two presses, and STOP-then-START already works via
-  `push-hub/src/focus.go`'s `setServiceRunning` as of the direct-process-
-  control fallback).
-- **Quit button** for push-hub itself (and confirm each hack's own STOP
-  already covers "quit that hack" — `setServiceRunning(e, false)` does,
-  via `pkill -x`/`service ... stop`, both already implemented).
+- **Restart/Quit buttons — implemented, not yet hardware-verified.**
+  - Hub menu: a 3rd per-row action, RESTART (bottom-screen button 3,
+    alongside FOCUS/START-STOP) — stops then starts the selected hack
+    (`push-hub/src/focus.go`'s `restartHack`), for the case START/STOP
+    alone can't fix (a hack running since before push-hub started never
+    re-probes for it — see `hubPresent`'s doc in each hack's own
+    `chord.go` — and keeps fighting the hub for the screen until
+    restarted).
+  - Hub menu, far right (buttons 7/8, not tied to the cursor row):
+    RE-HUB (restarts push-hub itself — no supervisor process exists for
+    it the way `push-hack-xenia`/`push-hack-mm` have, so this spawns a
+    detached replacement that waits `push-hub/src/focus.go`'s
+    `restartSelfDelay` before binding the port, then quits this
+    instance) and QUIT (push-hub's own graceful shutdown, via
+    `focus.go`'s `quitSelf`).
+  - Each hack's OWN on-screen SETTINGS page also got QUIT/RESTART
+    (`push-hack-xenia`/`push-hack-mm`'s new `selfcontrol.go`), so you
+    don't have to leave the hack's screen and go back to the hub first —
+    "per device including the hub," per the explicit ask. These lean on
+    the supervisor/child split `main.go`'s `runSupervisor` already
+    implements: RESTART is just the child's own normal shutdown+exit
+    (the supervisor sees an unprompted exit and always respawns, same as
+    a crash); QUIT signals the supervisor's own PID directly
+    (`os.Getppid()`) so the supervisor takes its "don't respawn" path
+    instead.
+  - **Not yet re-verified on real Push hardware** (this environment has
+    no Push/push-manager to test against) — see each file's own doc
+    comment for the reasoning. Confirm on next hardware pass: hub-side
+    RESTART/RE-HUB/QUIT all actually fire from their bottom-screen slots
+    (3/7/8) without colliding with anything else on that row; each
+    hack's own QUIT/RESTART (SETTINGS page, slots 4/6 for MM at
+    `CCScreenBot4`/`CCScreenBot6`, same CCs for Xenia at slots 3/5 — the
+    slot **index** differs between the two because Xenia's SETTINGS page
+    had no bottom strip drawn at all before this, while MM's already had
+    one with different slots occupied by its own SET/EXIT buttons) don't
+    collide with the existing per-column SET commit buttons on that same
+    page.
 
 ## Presets
 

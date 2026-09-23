@@ -114,6 +114,30 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 				}
 			}()
 		}
+	case push3.CCScreenBot3:
+		// RESTART (selected row) -- for the case START/STOP alone can't
+		// fix: a hack that's already running but started before push-hub
+		// did never re-probes for it (each hack's own chord.go only
+		// checks once, at boot) and keeps fighting the hub for Shift+
+		// Device/the screen until restarted. See focus.go's restartHack.
+		if list := getStatuses(); getCursor() < len(list) {
+			target := list[getCursor()]
+			go func() {
+				if err := restartHack(target.hackEntry); err != nil {
+					log.Printf("restart %s: %v", target.ID, err)
+				}
+			}()
+		}
+	case push3.CCScreenBot7:
+		// RESTART (push-hub itself) -- see focus.go's restartSelf.
+		go func() {
+			if err := restartSelf(); err != nil {
+				log.Printf("restart self: %v", err)
+			}
+		}()
+	case push3.CCScreenBot8:
+		// QUIT (push-hub itself) -- see focus.go's quitSelf.
+		go quitSelf()
 	}
 }
 
