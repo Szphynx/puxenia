@@ -42,6 +42,17 @@ alive-dot already uses). Not triggered by FOCUS — that's usually handing
 off to an already-running, already-loaded process with nothing to wait
 on, so a splash there would just flash pointlessly.
 
+**Update**: reported stuck pulsing on real hardware sometimes (start/
+restart failing silently — a crash loop, wrong exec path, a leftover
+process still holding the port — previously left the splash waiting on
+an "alive" that was never coming, forever, with no indication anything
+was wrong). `splash.go` now gives up after `splashTimeout` (30s, generous
+margin over even `push-hack-mm`'s own ~22s ROM boot) and falls through to
+the normal menu, whose dead/grey row already shows the real state. Not
+yet hardware-confirmed which failure mode was actually happening — this
+bounds the symptom regardless of the exact cause, but if it recurs
+worth checking that hack's own log for what actually went wrong.
+
 ## push-hub: process control
 
 - **Restart/Quit buttons — implemented, not yet hardware-verified.**
