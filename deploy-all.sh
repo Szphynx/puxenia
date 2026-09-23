@@ -53,6 +53,17 @@ PUSH_IP="${PUSH_IP:-192.168.3.89}"
 PUSH_KEY="${PUSH_KEY:-$HOME/xenia-build/pushkey}"
 PULL_BRANCH="${PULL_BRANCH:-main}"
 
+# Always, regardless of which --xenia/--mm/--hub flags were passed -- this
+# used to live only inside push-xenia's own deploy.sh, so a `--mm --hub`
+# run (skipping Xenia specifically to avoid its slow rebuild) silently
+# never reloaded snd-aloop after a Push reboot, leaving the "Audio"
+# loopback card missing with no audio-related flag anywhere in sight to
+# explain why. See ensure-audio-loopback.sh's own doc.
+echo "== checking audio loopback =="
+PUSH_HOST="$PUSH_IP"
+source "$SCRIPT_DIR/ensure-audio-loopback.sh"
+ensure_audio_loopback
+
 if [[ "${NO_PULL:-}" != "1" ]]; then
     echo "== git pull origin $PULL_BRANCH =="
     ( cd "$SCRIPT_DIR" && git pull origin "$PULL_BRANCH" )

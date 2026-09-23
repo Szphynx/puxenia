@@ -100,30 +100,12 @@ fi
 echo "==> Fixing up things a Push reboot resets"
 ssh_ "[ -e /lib64 ] || ln -s /lib /lib64"
 
-# push-xenia looks for card id "Audio" -- NOT the "PHVAudio" driver
-# name shown in /proc/asound/cards's second column. That id is ALSA's
-# auto-derived id for this module's longname ("Push Hack Virtual
-# Audio"), since it's insmod'd with no id= override. Don't try to force
-# id=PHVAudio here: once Live has opened the card's PCM devices, an
-# id= reload requires rmmod first, which fails EBUSY while Live holds
-# it open -- forcing that would mean killing Live just to rename an
-# already-working card.
-if ! ssh_ "grep -qE '^\s*[0-9]+ \[Audio *\]' /proc/asound/cards 2>/dev/null"; then
-    KVER="$(ssh_ "uname -r")"
-    KO_LOCAL="$ALOOP_KO_DIR/$KVER/snd-aloop.ko"
-    if [[ -f "$KO_LOCAL" ]]; then
-        echo "   Loading bundled snd-aloop.ko for kernel $KVER (push-hack-audio-loopback"
-        echo "   was never installed persistently via the catalog, so this is redone"
-        echo "   on every reboot -- see push-hack-audio-loopback/README.md to install"
-        echo "   it properly instead)."
-        scp_ "$KO_LOCAL" "root@${PUSH_HOST}:$REMOTE_DIR/snd-aloop.ko"
-        ssh_ "insmod $REMOTE_DIR/snd-aloop.ko"
-    else
-        echo "   WARNING: no bundled snd-aloop.ko for kernel $KVER in $ALOOP_KO_DIR --"
-        echo "   audio loopback will not work. See push-hack-audio-loopback/README.md"
-        echo "   to build one for this kernel."
-    fi
-fi
+# Shared with deploy-all.sh (which calls this regardless of which hacks'
+# flags are passed, so a --mm --hub-only run doesn't silently skip it) --
+# see ensure-audio-loopback.sh's own doc for why this moved out of being
+# Xenia-exclusive.
+source "$(dirname "${BASH_SOURCE[0]}")/ensure-audio-loopback.sh"
+ensure_audio_loopback
 
 if [[ "${BACKGROUND:-}" == "1" ]]; then
     echo "==> Launching push-xenia detached (BACKGROUND=1)"

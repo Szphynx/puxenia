@@ -282,6 +282,34 @@ actually resolve it:
   anything else before this). Nothing about which device a hack uses is
   hardcoded anymore; it's fully user-selectable from SETTINGS.
 
+## 10. "The loopback driver doesn't appear on my Push" after a reboot,
+## even though I redeployed — the snd-aloop reload was Xenia-exclusive
+
+Reported after the user rebooted Push and redeployed with
+`deploy-all.sh --mm --hub` (skipping puXenia specifically to avoid
+rebuilding its slow C++ plugin). The `snd-aloop` kernel module reload
+(needed after every reboot — `/tmp` is tmpfs, and
+`push-hack-audio-loopback` was never installed persistently via the
+catalog) used to live **only** inside `push-xenia`'s own `deploy.sh`. A
+deploy that skips puXenia skipped this too, with nothing about `--mm
+--hub` looking audio-related at all — the "Audio" loopback card was
+simply never reloaded, so of course it didn't appear.
+
+**Fix**: the check-and-reload logic moved to its own shared
+`ensure-audio-loopback.sh`, sourced by both `deploy.sh` (still
+self-sufficient for a standalone run) and `deploy-all.sh` (called
+unconditionally, before dispatching to any hack, regardless of which
+`--xenia`/`--mm`/`--hub` flags were passed).
+
+**Directive**: a prerequisite step that "happens to" live inside one
+component's own deploy script, but is really needed by several
+components, will silently stop happening the moment someone deploys
+without that one component — this is the same class of mistake as
+hardcoding one hack's own default onto a resource two hacks share (see
+section 9 above). Shared system-level setup belongs in shared,
+unconditionally-run code, not tucked inside whichever hack's script
+happened to need it first.
+
 ## General debugging directive for this project
 
 Given how many of the above turned out to be "looks completely correct
