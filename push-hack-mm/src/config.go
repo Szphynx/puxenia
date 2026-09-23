@@ -11,8 +11,10 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/federico-pepe/ableton-push-hack/core/alsaseq"
 )
@@ -88,4 +90,19 @@ func saveConfig(hackDir string, cfg persistedConfig) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+var configSaveMu sync.Mutex
+
+// persistConfig saves rt off the calling goroutine — the render loop must
+// never block on disk. Snapshot and write share configSaveMu, so when
+// several saves race (fast encoder ticks) the last write is the newest.
+func persistConfig(hackDir string, rt *sharedConfig) {
+	go func() {
+		configSaveMu.Lock()
+		defer configSaveMu.Unlock()
+		if err := saveConfig(hackDir, rt.snapshot()); err != nil {
+			log.Printf("saving %s: %v", configFileName, err)
+		}
+	}()
 }

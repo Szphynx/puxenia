@@ -301,6 +301,21 @@
     </div>
   </div>
 
+  <section id="presets">
+    <h2>Presets</h2>
+    <div class="io-row">
+      <label>Save as</label>
+      <input class="io" id="preset-name" maxlength="48" placeholder="name">
+      <button class="xport-btn" type="button" id="preset-save">Save</button>
+    </div>
+    <div class="io-row">
+      <label>Recall</label>
+      <select class="io" id="preset-list"></select>
+      <button class="xport-btn" type="button" id="preset-load">Load</button>
+    </div>
+    <div class="io-row"><label>Status</label><span id="preset-status">idle</span></div>
+  </section>
+
   <section id="io">
     <h2>Settings</h2>
     <div class="io-row"><label>MIDI IN</label><select class="io" id="io-midi"></select></div>
@@ -829,6 +844,7 @@ function applyState(state) {
   applyBaseChannel(state.baseChannel || 0);
   applyAudioStatus(state.audio || {}, (state.diag || {}).deviceReady);
   applyDiag(state.diag || {});
+  applyPresetStatus(state.preset || "idle");
   document.getElementById("version").textContent = state.version ? `v${state.version}` : "";
 }
 
@@ -882,6 +898,38 @@ async function init() {
     document.getElementById("status-text").textContent = "Disconnected — retrying…";
   };
 }
+
+// -- presets: the plugin saves/recalls off its render thread; progress
+// arrives as state.preset. A recall reboots the emulated machine (~20s).
+let lastPresetStatus = "";
+function applyPresetStatus(s) {
+  document.getElementById("preset-status").textContent = s;
+  if (s !== lastPresetStatus && s.startsWith("saved")) refreshPresets();
+  lastPresetStatus = s;
+}
+async function refreshPresets() {
+  try {
+    const names = await (await fetch("/api/presets")).json();
+    const el = document.getElementById("preset-list");
+    const cur = el.value;
+    el.replaceChildren(...names.map((n) => new Option(n, n)));
+    if (names.includes(cur)) el.value = cur;
+  } catch (e) { console.error("refreshPresets failed", e); }
+}
+async function presetAction(action, name) {
+  const res = await fetch(`/api/presets/${action}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) document.getElementById("preset-status").textContent = await res.text();
+}
+document.getElementById("preset-save").addEventListener("click", () =>
+  presetAction("save", document.getElementById("preset-name").value.trim()));
+document.getElementById("preset-load").addEventListener("click", () => {
+  const name = document.getElementById("preset-list").value;
+  if (name && confirm(`Load "${name}"? The Monomachine reboots (~20s of silence).`)) presetAction("load", name);
+});
+refreshPresets();
 
 initLcdFx();
 init();

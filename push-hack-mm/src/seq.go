@@ -104,6 +104,21 @@ func (s *seqState) Transport() (playing, recording bool) {
 	return s.playing, s.recording
 }
 
+// Restore replaces the step/mute shadow with a preset's saved copy (see
+// audiosession.go's preset resync) and stops transport: the recalled
+// machine cold-boots stopped.
+func (s *seqState) Restore(snap seqSnapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.steps = [mmNumTracks][mmNumSteps]bool{}
+	s.mutes = [mmNumTracks]bool{}
+	for t := 0; t < mmNumTracks && t < len(snap.Steps); t++ {
+		copy(s.steps[t][:], snap.Steps[t])
+	}
+	copy(s.mutes[:], snap.Mutes)
+	s.playing, s.recording = false, false
+}
+
 // Snapshot is the web UI's JSON shape for the SEQ page (webserver.go).
 type seqSnapshot struct {
 	StepPage  int      `json:"stepPage"`

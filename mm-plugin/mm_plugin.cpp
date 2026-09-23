@@ -52,12 +52,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <exception>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "mdLib/mddevice.h"
@@ -66,6 +71,8 @@
 #include "mdLib/mdromloader.h"
 #include "mdLib/mdfrontpanel.h"
 #include "synthLib/midiTypes.h"
+
+#include <unistd.h>
 
 namespace
 {
@@ -270,6 +277,68 @@ namespace
 		double heldSeconds = 0.0;
 	};
 
+	// PresetJob: one save-or-load in flight at a time. The heavy parts
+	// (file I/O, building a whole replacement md::Hardware in
+	// StateTransaction::prepare(), destroying the retired one) run on
+	// `worker`; only the O(1) device touches -- beginStateTransaction and
+	// finishStateTransaction's hardware swap -- happen on the render
+	// thread, same split mdJucePlugin uses under its device lock. `stage`
+	// is the only handoff between the two threads.
+	struct PresetJob
+	{
+		enum Stage : int
+		{
+			Idle,
+			Reading,   // worker: reading + validating the file
+			ReadDone,  // render: beginStateTransaction
+			Begun,     // worker: prepare()
+			Prepared,  // render: fade out one block, then commit
+			Finished,  // worker: destroy retired hardware, report status
+			Aborted,   // worker: report status
+			Saving,    // worker: writing the file
+		};
+		std::atomic<int> stage{Idle};
+		std::atomic<bool> quit{false};
+		std::thread worker;
+		std::shared_ptr<const std::vector<uint8_t>> blob;
+		std::vector<uint8_t> shadow;
+		std::string extra;
+		std::unique_ptr<synthLib::Device::StateTransaction> tx;
+		bool fading = false;
+		bool committed = false;
+		std::mutex statusMu;
+		std::string status = "idle";
+
+		void setStatus(std::string s)
+		{
+			std::lock_guard<std::mutex> lock(statusMu);
+			status = std::move(s);
+		}
+		std::string getStatus()
+		{
+			std::lock_guard<std::mutex> lock(statusMu);
+			return status;
+		}
+		bool loadInFlight() const
+		{
+			const int s = stage.load(std::memory_order_acquire);
+			return s >= Reading && s <= Finished;
+		}
+		// Worker-side wait for the render thread to move `stage` off `s`.
+		// Returns false on shutdown (destroy_instance) so the worker never
+		// blocks forever on a render thread that has stopped calling in.
+		bool waitWhile(int s)
+		{
+			while(stage.load(std::memory_order_acquire) == s)
+			{
+				if(quit.load(std::memory_order_acquire))
+					return false;
+				std::this_thread::sleep_for(std::chrono::milliseconds(2));
+			}
+			return true;
+		}
+	};
+
 	struct MmInstance
 	{
 		md::Device *device = nullptr;
@@ -318,8 +387,24 @@ namespace
 		struct PendingRelease { md::PanelControl control; uint64_t releaseAtFrame; };
 		std::vector<PendingRelease> pendingPanelReleases;
 
+		// render_block's float scratch, sized once in create_instance so
+		// the render thread never allocates.
+		std::vector<float> left, right;
+		std::vector<synthLib::SMidiEvent> midiOut;
+
+		PresetJob preset;
+		// Opaque host payload stored alongside the last loaded/saved
+		// preset (push-hack-mm keeps its SEQ step shadow here).
+		std::string presetExtra;
+		uint32_t presetLoads = 0; // bumped on every committed load
+
 		~MmInstance()
 		{
+			// Join before deleting device: the worker may still hold a
+			// transaction referencing the device's preparation context.
+			preset.quit.store(true, std::memory_order_release);
+			if(preset.worker.joinable())
+				preset.worker.join();
 			delete device;
 		}
 	};
@@ -527,6 +612,230 @@ namespace
 		uint8_t cur = inst->paramValues[track]["mute"];
 		applyTrackParam(inst, track, def, cur ? 0 : 1);
 	}
+
+	// -- presets ---------------------------------------------------------
+	// File layout (little-endian u32 lengths):
+	//   "PUMMA01\0" | u32 n | device state (md::Device::getState, Global:
+	//   patch RAM + DigiPRO user flash) | u32 n | this bridge's per-track
+	//   param shadow (kNumTracks x kNumParams bytes, kParams order) |
+	//   u32 n | host extra (opaque)
+	// The shadow rides along because mdLib can't read single params back:
+	// without it every slider would show stale numbers after a recall.
+	constexpr char kPresetMagic[8] = {'P', 'U', 'M', 'M', 'A', '0', '1', '\0'};
+
+	bool writeChunk(FILE *f, const void *data, size_t n)
+	{
+		const uint8_t len[4] = {uint8_t(n), uint8_t(n >> 8), uint8_t(n >> 16), uint8_t(n >> 24)};
+		return fwrite(len, 1, 4, f) == 4 && (n == 0 || fwrite(data, 1, n, f) == n);
+	}
+
+	bool readChunk(const std::vector<uint8_t> &file, size_t &pos, std::vector<uint8_t> &out)
+	{
+		if(file.size() - pos < 4)
+			return false;
+		const size_t n = size_t(file[pos]) | size_t(file[pos + 1]) << 8 |
+			size_t(file[pos + 2]) << 16 | size_t(file[pos + 3]) << 24;
+		pos += 4;
+		if(file.size() - pos < n)
+			return false;
+		out.assign(file.begin() + long(pos), file.begin() + long(pos + n));
+		pos += n;
+		return true;
+	}
+
+	// Temp file + fsync + rename: a crash or power loss mid-save leaves the
+	// previous preset intact, never a torn one.
+	bool writePresetFile(const std::string &path, const std::vector<uint8_t> &blob,
+		const std::vector<uint8_t> &shadow, const std::string &extra, std::string &err)
+	{
+		const std::string tmp = path + ".tmp";
+		FILE *f = fopen(tmp.c_str(), "wb");
+		if(!f)
+		{
+			err = "cannot open " + tmp;
+			return false;
+		}
+		bool ok = fwrite(kPresetMagic, 1, sizeof(kPresetMagic), f) == sizeof(kPresetMagic) &&
+			writeChunk(f, blob.data(), blob.size()) &&
+			writeChunk(f, shadow.data(), shadow.size()) &&
+			writeChunk(f, extra.data(), extra.size()) &&
+			fflush(f) == 0 && fsync(fileno(f)) == 0;
+		ok = fclose(f) == 0 && ok;
+		if(!ok || rename(tmp.c_str(), path.c_str()) != 0)
+		{
+			remove(tmp.c_str());
+			err = "write failed: " + path;
+			return false;
+		}
+		return true;
+	}
+
+	bool readPresetFile(const std::string &path, std::vector<uint8_t> &blob,
+		std::vector<uint8_t> &shadow, std::string &extra, std::string &err)
+	{
+		FILE *f = fopen(path.c_str(), "rb");
+		if(!f)
+		{
+			err = "cannot open " + path;
+			return false;
+		}
+		std::vector<uint8_t> file;
+		uint8_t chunk[65536];
+		size_t n;
+		while((n = fread(chunk, 1, sizeof(chunk), f)) > 0)
+			file.insert(file.end(), chunk, chunk + n);
+		fclose(f);
+
+		std::vector<uint8_t> extraBytes;
+		size_t pos = sizeof(kPresetMagic);
+		if(file.size() < pos || memcmp(file.data(), kPresetMagic, pos) != 0 ||
+			!readChunk(file, pos, blob) || !readChunk(file, pos, shadow) ||
+			!readChunk(file, pos, extraBytes) || blob.empty())
+		{
+			err = "not a puMMa preset (bad header or truncated): " + path;
+			return false;
+		}
+		extra.assign(extraBytes.begin(), extraBytes.end());
+		return true;
+	}
+
+	void loadWorker(MmInstance *inst, std::string path)
+	{
+		auto &job = inst->preset;
+		std::vector<uint8_t> blob;
+		std::string err;
+		if(!readPresetFile(path, blob, job.shadow, job.extra, err))
+		{
+			job.setStatus("error: " + err);
+			job.stage.store(PresetJob::Idle, std::memory_order_release);
+			return;
+		}
+		job.blob = std::make_shared<const std::vector<uint8_t>>(std::move(blob));
+		job.stage.store(PresetJob::ReadDone, std::memory_order_release);
+		if(!job.waitWhile(PresetJob::ReadDone))
+			return;
+		if(job.stage.load(std::memory_order_acquire) == PresetJob::Begun)
+		{
+			// Builds a complete replacement md::Hardware from the state --
+			// seconds of work, never on the render thread. Must not touch
+			// the live device (synthLib::Device::StateTransaction contract).
+			const bool prepared = job.tx->prepare();
+			job.stage.store(PresetJob::Prepared, std::memory_order_release);
+			if(!job.waitWhile(PresetJob::Prepared))
+				return;
+			if(!prepared)
+				err = "device rejected preset state";
+		}
+		else
+		{
+			err = "device refused to start the restore";
+		}
+		// After a commit the transaction owns the retired hardware; its
+		// destruction is heavy, so it happens here, not on the render thread.
+		job.tx.reset();
+		job.blob.reset();
+		job.setStatus(job.committed ? "loaded " + path : "error: " + err);
+		job.stage.store(PresetJob::Idle, std::memory_order_release);
+	}
+
+	void startLoad(MmInstance *inst, const std::string &path)
+	{
+		auto &job = inst->preset;
+		if(job.stage.load(std::memory_order_acquire) != PresetJob::Idle)
+		{
+			job.setStatus("error: busy");
+			return;
+		}
+		if(job.worker.joinable())
+			job.worker.join(); // previous job already reached Idle: returns at once
+		job.committed = false;
+		job.fading = false;
+		job.setStatus("loading " + path);
+		job.stage.store(PresetJob::Reading, std::memory_order_release);
+		job.worker = std::thread(loadWorker, inst, path);
+	}
+
+	// startSave snapshots device state on the calling (render) thread --
+	// the device is not thread-safe, so this copy (~3 MiB: patch RAM +
+	// DigiPRO flash) can't move off it -- and hands the file write to the
+	// worker.
+	void startSave(MmInstance *inst, const std::string &path, std::string extra)
+	{
+		auto &job = inst->preset;
+		if(job.stage.load(std::memory_order_acquire) != PresetJob::Idle)
+		{
+			job.setStatus("error: busy");
+			return;
+		}
+		auto blob = std::make_shared<std::vector<uint8_t>>();
+		if(!inst->device->getState(*blob, synthLib::StateTypeGlobal) || blob->empty())
+		{
+			job.setStatus("error: device getState failed");
+			return;
+		}
+		std::vector<uint8_t> shadow;
+		shadow.reserve(kNumTracks * kNumParams);
+		for(int t = 0; t < kNumTracks; ++t)
+			for(const auto &p : kParams)
+				shadow.push_back(inst->paramValues[t][p.key]);
+
+		if(job.worker.joinable())
+			job.worker.join();
+		job.setStatus("saving " + path);
+		job.stage.store(PresetJob::Saving, std::memory_order_release);
+		inst->presetExtra = extra;
+		job.worker = std::thread([inst, path, blob, shadow = std::move(shadow), extra = std::move(extra)]
+		{
+			std::string err;
+			const bool ok = writePresetFile(path, *blob, shadow, extra, err);
+			inst->preset.setStatus(ok ? "saved " + path : "error: " + err);
+			inst->preset.stage.store(PresetJob::Idle, std::memory_order_release);
+		});
+	}
+
+	// servicePresetLoad advances a load on the render thread; called at the
+	// top of every render_block. Returns true when this block must fade
+	// out (the next block commits, so the swap never cuts mid-waveform).
+	bool servicePresetLoad(MmInstance *inst)
+	{
+		auto &job = inst->preset;
+		const int stage = job.stage.load(std::memory_order_acquire);
+		if(stage == PresetJob::ReadDone)
+		{
+			job.tx = inst->device->beginStateTransaction(job.blob, synthLib::StateTypeGlobal);
+			job.stage.store(job.tx ? PresetJob::Begun : PresetJob::Aborted, std::memory_order_release);
+			return false;
+		}
+		if(stage != PresetJob::Prepared)
+			return false;
+		if(!job.fading)
+		{
+			job.fading = true;
+			return true;
+		}
+		// O(1) hardware swap; the retired machine is now owned by job.tx.
+		job.committed = inst->device->finishStateTransaction(*job.tx);
+		if(job.committed)
+		{
+			// The replacement machine cold-boots from the restored memory:
+			// re-arm the boot gate and drop everything aimed at the old one.
+			inst->framesSinceCreate = 0;
+			inst->panelRows.reset();
+			inst->pendingPanelReleases.clear();
+			inst->pendingMidiIn.clear();
+			inst->activeNotes.clear();
+			inst->currentTrack = 0;
+			const bool shadowMatches = job.shadow.size() == size_t(kNumTracks) * kNumParams;
+			for(int t = 0; t < kNumTracks; ++t)
+				for(size_t i = 0; i < kNumParams; ++i)
+					inst->paramValues[t][kParams[i].key] =
+						shadowMatches ? job.shadow[size_t(t) * kNumParams + i] : kParams[i].defaultV;
+			inst->presetExtra.swap(job.extra);
+			++inst->presetLoads;
+		}
+		job.stage.store(PresetJob::Finished, std::memory_order_release);
+		return false;
+	}
 }
 
 /* ---- plugin_api_v2 contract -- copied verbatim from
@@ -612,6 +921,13 @@ namespace
 			for(int t = 0; t < kNumTracks; ++t)
 				for(const auto &p : kParams)
 					inst->paramValues[t][p.key] = p.defaultV;
+
+			// Pre-sized so render_block never allocates; it grows these
+			// only if the host ever asks for a bigger block.
+			inst->left.resize(4096);
+			inst->right.resize(4096);
+			inst->pendingMidiIn.reserve(256);
+			inst->midiOut.reserve(256);
 
 			// Boot-select track 0 so currentTrack and the firmware's own
 			// selected-track state start in agreement (selectTrack no-ops
@@ -719,8 +1035,27 @@ namespace
 				inst->baseChannel = v < 0 ? 0 : (v > 15 ? 15 : v);
 				return;
 			}
-			if(isBooting(inst))
+			if(strcmp(key, "preset_load") == 0)
+			{
+				// val is an absolute path. Allowed during boot: the restore
+				// replaces the machine wholesale anyway.
+				startLoad(inst, val);
+				return;
+			}
+			// A load in flight is about to replace the machine: anything
+			// sent now would land on the old one and be lost, silently
+			// diverging from the host's shadow (see "ready" in get_param).
+			if(isBooting(inst) || inst->preset.loadInFlight())
 				return; // see MmInstance::framesSinceCreate's doc comment
+			if(strcmp(key, "preset_save") == 0)
+			{
+				// val is "path\nextra" -- extra is opaque host data stored
+				// in the same file (push-hack-mm: SEQ step shadow JSON).
+				std::string s(val);
+				const auto nl = s.find('\n');
+				startSave(inst, s.substr(0, nl), nl == std::string::npos ? "" : s.substr(nl + 1));
+				return;
+			}
 			if(strcmp(key, "track") == 0)
 			{
 				selectTrack(inst, atoi(val));
@@ -785,11 +1120,7 @@ namespace
 				md::MachineModel::Monomachine, change,
 				static_cast<uint8_t>(inst->baseChannel));
 			if(cc)
-			{
-				fprintf(stdout, "[mm_plugin] set_param track=%d %s=%u -> CC ch%u cc%u=%u\n",
-					inst->currentTrack, key, v, (*cc)[0] & 0x0F, (*cc)[1], (*cc)[2]);
 				queueMidi3(inst, *cc);
-			}
 		}
 		catch(const std::exception &e)
 		{
@@ -817,7 +1148,13 @@ namespace
 		// flips to "1"; the Go host should poll it and hold off (or show a
 		// "booting" status) rather than let pad presses appear to do
 		// nothing with no explanation.
-		if(strcmp(key, "ready") == 0) return writeStr(buf, buf_len, isBooting(inst) ? "0" : "1");
+		// Also "0" while a preset load is in flight, so the host holds its
+		// own shadow still until the replacement machine is up.
+		if(strcmp(key, "ready") == 0)
+			return writeStr(buf, buf_len, isBooting(inst) || inst->preset.loadInFlight() ? "0" : "1");
+		if(strcmp(key, "preset_status") == 0) return writeStr(buf, buf_len, inst->preset.getStatus());
+		if(strcmp(key, "preset_loads") == 0) return writeStr(buf, buf_len, std::to_string(inst->presetLoads));
+		if(strcmp(key, "preset_extra") == 0) return writeStr(buf, buf_len, inst->presetExtra);
 		if(strcmp(key, "track") == 0) return writeStr(buf, buf_len, std::to_string(inst->currentTrack));
 		if(strcmp(key, "active_voices") == 0) return writeStr(buf, buf_len, std::to_string(inst->activeNotes.size()));
 
@@ -940,13 +1277,19 @@ namespace
 			if(frames > 0) memset(out_interleaved_lr, 0, static_cast<size_t>(frames) * 2 * sizeof(int16_t));
 			return;
 		}
+		const bool fadeOut = servicePresetLoad(inst);
 		drainPendingPanelReleases(inst);
 		inst->framesSinceCreate += static_cast<uint64_t>(frames);
 
 		try
 		{
-			std::vector<float> left(static_cast<size_t>(frames), 0.0f);
-			std::vector<float> right(static_cast<size_t>(frames), 0.0f);
+			auto &left = inst->left;
+			auto &right = inst->right;
+			if(left.size() < static_cast<size_t>(frames))
+			{
+				left.resize(static_cast<size_t>(frames));
+				right.resize(static_cast<size_t>(frames));
+			}
 			std::array<float *, 12> outs{};
 			outs[0] = left.data();
 			outs[1] = right.data();
@@ -964,13 +1307,20 @@ namespace
 			for(size_t i = 0; i < typedOuts.size(); ++i) typedOuts[i] = outs[i];
 			for(size_t i = 0; i < typedIns.size(); ++i) typedIns[i] = ins[i];
 
-			std::vector<synthLib::SMidiEvent> midiOut; // discarded: device->host MIDI (e.g. clock) not consumed here
+			// midiOut discarded: device->host MIDI (e.g. clock) not consumed here
+			inst->midiOut.clear();
 			inst->device->process(typedIns, typedOuts, static_cast<size_t>(frames),
-				inst->pendingMidiIn, midiOut);
+				inst->pendingMidiIn, inst->midiOut);
 			inst->pendingMidiIn.clear();
 
 			for(int i = 0; i < frames; ++i)
 			{
+				if(fadeOut)
+				{
+					const float g = 1.0f - static_cast<float>(i + 1) / static_cast<float>(frames);
+					left[static_cast<size_t>(i)] *= g;
+					right[static_cast<size_t>(i)] *= g;
+				}
 				auto clamp16 = [](float f) -> int16_t
 				{
 					const float scaled = f * kOutputHeadroom * 32767.0f;

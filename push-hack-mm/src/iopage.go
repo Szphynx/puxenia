@@ -13,7 +13,6 @@ package main
 import (
 	"fmt"
 	"image"
-	"log"
 	"sync"
 
 	"github.com/federico-pepe/ableton-push-hack/core/alsapcm"
@@ -186,9 +185,7 @@ func (io *ioState) commitRecvChannel() {
 }
 
 func (io *ioState) saveLocked() {
-	if err := saveConfig(io.hackDir, io.rt.snapshot()); err != nil {
-		log.Printf("settings: saving %s: %v", configFileName, err)
-	}
+	persistConfig(io.hackDir, io.rt)
 }
 
 type ioOption struct {

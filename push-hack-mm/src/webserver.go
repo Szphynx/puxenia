@@ -15,6 +15,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/federico-pepe/ableton-push-hack/core/httpx"
@@ -61,6 +66,7 @@ func (ws *webServer) buildState() map[string]any {
 		"panel":       panel,
 		"audio":       map[string]any{"ready": ready, "message": msg},
 		"diag":        map[string]any{"cpuPercent": ws.diag.getCPU(), "activeVoices": ws.diag.getVoices(), "deviceReady": ws.diag.getReady()},
+		"preset":      ws.diag.getPresetStatus(),
 		// focused/level: push-hub's picker reads these (GET /api/state) to
 		// show this hack as "alive" (VU meter + channel) or greyed out/
 		// disconnected — see docs/push-hub-proposal.md and display.go's
@@ -341,6 +347,9 @@ func runWebServer(port int, version string, pmURL string, params *paramState, io
 	mux.HandleFunc("POST /api/io/channel", ws.handleSetIO(ws.io.SetChannelByIndex))
 	mux.HandleFunc("POST /api/io/recv-channel", ws.handleSetIO(ws.io.SetRecvChannelByIndex))
 	mux.HandleFunc("POST /api/track", ws.handleTrack)
+	mux.HandleFunc("GET /api/presets", ws.handlePresetList)
+	mux.HandleFunc("POST /api/presets/save", ws.handlePreset(ctlPresetSave))
+	mux.HandleFunc("POST /api/presets/load", ws.handlePreset(ctlPresetLoad))
 	mux.HandleFunc("POST /api/page", ws.handlePage)
 	mux.HandleFunc("POST /api/bank", ws.handleBank)
 	mux.HandleFunc("POST /api/seq/step", ws.handleSeqStep)
@@ -380,5 +389,62 @@ func runWebServer(port int, version string, pmURL string, params *paramState, io
 	log.Printf("web UI listening on %s", srv.Addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("web server error: %v", err)
+	}
+}
+
+const presetExt = ".pumma"
+
+// presetName is the whitelist for preset names: they become file names,
+// so no path separators, dots, or anything else that could escape
+// presetDir.
+var presetName = regexp.MustCompile(`^[A-Za-z0-9 _-]{1,48}$`)
+
+func (ws *webServer) presetDir() string { return filepath.Join(ws.io.HackDir(), "presets") }
+
+func (ws *webServer) handlePresetList(w http.ResponseWriter, r *http.Request) {
+	entries, _ := os.ReadDir(ws.presetDir()) // missing dir = no presets yet
+	names := []string{}
+	for _, e := range entries {
+		if n, ok := strings.CutSuffix(e.Name(), presetExt); ok && presetName.MatchString(n) {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	httpx.JSON(w, names)
+}
+
+// handlePreset queues a save/load by name; the plugin does the actual
+// work off its render thread and reports progress via "preset" in the
+// state stream.
+func (ws *webServer) handlePreset(kind ctlKind) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !presetName.MatchString(body.Name) {
+			http.Error(w, "bad preset name (1-48 of A-Z a-z 0-9 space _ -)", http.StatusBadRequest)
+			return
+		}
+		if !ws.diag.getReady() {
+			http.Error(w, "device booting or loading, try again shortly", http.StatusConflict)
+			return
+		}
+		path := filepath.Join(ws.presetDir(), body.Name+presetExt)
+		if kind == ctlPresetSave {
+			if err := os.MkdirAll(ws.presetDir(), 0o755); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else if _, err := os.Stat(path); err != nil {
+			http.Error(w, "no preset "+body.Name, http.StatusNotFound)
+			return
+		}
+		select {
+		case ws.ctl <- controlEvent{kind: kind, key: path}:
+		default:
+			http.Error(w, "control channel full, try again", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
 	}
 }

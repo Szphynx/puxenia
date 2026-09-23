@@ -7,6 +7,7 @@ package main
 import "C"
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -56,6 +57,15 @@ type diagStats struct {
 	// doc comment). Zero value is false, which is correct: nothing has
 	// polled the plugin yet at construction, and it genuinely isn't ready.
 	deviceReady atomic.Bool
+	// presetStatus mirrors get_param("preset_status"): "idle", "saving
+	// <path>", "loading <path>", "saved/loaded <path>", "error: ...".
+	presetStatus atomic.Value
+}
+
+func (d *diagStats) setPresetStatus(s string) { d.presetStatus.Store(s) }
+func (d *diagStats) getPresetStatus() string {
+	s, _ := d.presetStatus.Load().(string)
+	return s
 }
 
 func (d *diagStats) setCPU(pct float64)  { d.cpuBits.Store(math.Float64bits(pct)) }
@@ -178,6 +188,7 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 	panelKey := C.CString("panel_state")
 	defer C.free(unsafe.Pointer(panelKey))
 	panelBuf := make([]byte, 4096)
+	lastPresetLoads := ""
 
 	for {
 		select {
@@ -314,9 +325,7 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 							}
 							rt.setBaseChannel(ch)
 							cSetParam(plugin, "base_channel", strconv.Itoa(ch))
-							if err := saveConfig(io.HackDir(), rt.snapshot()); err != nil {
-								log.Printf("SEQ: saving %s: %v", configFileName, err)
-							}
+							persistConfig(io.HackDir(), rt)
 							params.MarkDirty()
 						}
 					case pageSettings:
@@ -363,6 +372,22 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 					}
 					params.MarkDirty()
 
+				case ctlPresetSave:
+					// The SEQ step/mute shadow rides in the same file (the
+					// plugin's opaque "extra"), so a recall restores the
+					// grid for every track, not just the selected one.
+					extra, _ := json.Marshal(seq.Snapshot())
+					cSetParam(plugin, "preset_save", ev.key+"\n"+string(extra))
+
+				case ctlPresetLoad:
+					cSetParam(plugin, "preset_load", ev.key)
+					// Gate every later event now, not at the next 2s poll:
+					// the plugin drops them from here until the recalled
+					// machine has booted (see the boot-window comment above).
+					diag.setReady(false)
+					diag.setPresetStatus("loading")
+					params.MarkDirty()
+
 				case ctlBaseChannel:
 					ch := int(ev.val)
 					if ch < 0 {
@@ -373,9 +398,7 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 					}
 					rt.setBaseChannel(ch)
 					cSetParam(plugin, "base_channel", strconv.Itoa(ch))
-					if err := saveConfig(io.HackDir(), rt.snapshot()); err != nil {
-						log.Printf("web base_channel: saving %s: %v", configFileName, err)
-					}
+					persistConfig(io.HackDir(), rt)
 					params.MarkDirty()
 				}
 			default:
@@ -477,6 +500,23 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 			}
 			C.free(unsafe.Pointer(readyKey))
 
+			diag.setPresetStatus(pluginGetString(plugin, "preset_status", 512))
+			// A committed recall swapped the whole machine: pull every
+			// shadow (sliders, selected track, SEQ grid) from what the
+			// preset file carried, so host and device agree again.
+			if loads := pluginGetString(plugin, "preset_loads", 16); loads != lastPresetLoads {
+				if lastPresetLoads != "" {
+					var snap seqSnapshot
+					if err := json.Unmarshal([]byte(pluginGetString(plugin, "preset_extra", 8192)), &snap); err == nil {
+						seq.Restore(snap)
+					} else {
+						seq.Restore(seqSnapshot{})
+					}
+					params.syncFromPluginState(plugin)
+				}
+				lastPresetLoads = loads
+			}
+
 			log.Printf("progress: blocks=%d slow=%d maxPre=%v maxWrite=%v cpu=%.1f%% voices=%d",
 				blocks, slowBlocks, maxPre, maxWrite, cpuPct, diag.getVoices())
 			maxPre, maxWrite = 0, 0
@@ -490,6 +530,19 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 		}
 		blocks++
 	}
+}
+
+// pluginGetString is bridge_plugin_get_param for small string values; ""
+// on error or overflow.
+func pluginGetString(plugin *C.bridge_plugin_t, key string, max int) string {
+	buf := make([]byte, max)
+	k := C.CString(key)
+	defer C.free(unsafe.Pointer(k))
+	n := C.bridge_plugin_get_param(plugin, k, (*C.char)(unsafe.Pointer(&buf[0])), C.int(max))
+	if n < 0 {
+		return ""
+	}
+	return string(buf[:n])
 }
 
 // doTransport taps the named panel transport button (a quick press+release,

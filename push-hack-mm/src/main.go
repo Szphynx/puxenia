@@ -77,6 +77,8 @@ const (
 	ctlMuteToggle                 // idx = track (SEQ page bottom-row pad press)
 	ctlTransport                  // key = "play"|"stop"|"record" — web UI's transport buttons; works regardless of Push's current on-screen page
 	ctlStepPage                   // idx = 0 (toggle) or 1 (explicit page, val = 0/1) — web UI's page flip
+	ctlPresetSave                 // key = absolute preset path (webserver.go's presetPath)
+	ctlPresetLoad                 // key = absolute preset path
 	ctlBaseChannel                // val = absolute 0-indexed channel (0-15) — web UI's base-channel selector; SEQ page's own encoder 0 already sets this directly in audiosession.go, this is the same effect via an absolute value instead of a delta
 )
 
