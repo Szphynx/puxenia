@@ -39,15 +39,6 @@ func (h *panelStateHolder) get() panelSnapshot {
 	return h.snap
 }
 
-// StepColor returns the selected track's step i's live LED color (0-3),
-// or 0 (off) if i is out of range or no snapshot has landed yet.
-func (s panelSnapshot) StepColor(i int) int {
-	if i < 0 || i >= len(s.Steps) {
-		return 0
-	}
-	return s.Steps[i]
-}
-
 // globalPanelState is written only from audioSession.run (via
 // audiosession.go's own get_param("panel_state") call, throttled to
 // panelStatePollInterval) and read from the display loop, leds.go's pad

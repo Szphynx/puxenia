@@ -9,6 +9,78 @@ not full-manual-verified. Treat unverified items the same way
 `monomachine-port-notes.md` already treats its own open assumptions: don't
 re-guess them, go straight to hardware/manual when available.
 
+## "Weird transparent bar occluding the step grid" — confirmed still
+## present after the boot-gate fix; root cause was `panel_state`'s
+## per-step readback, not the boot window
+
+Reported again on real hardware (with a screenshot), after the boot-gate
+fix below and after the audio pipeline fix (`audio-pipeline-debugging.md`
+§9/§10) — so this was NOT the boot-window snapshot theorized below.
+Real audio was confirmed flowing (SETTINGS-page VU meter showed
+activity) and the transport showed PLAYING, yet the SEQ page still drew a
+static, multi-step-wide green block over one row that "only moves when
+you tap pads, doesn't even move when it's playing."
+
+Root cause: `leds.go`'s `stepLedColor` and `ui/index.html`'s `applySeq`
+both trusted the plugin's live `panel_state` readback
+(`getMonomachineStepLedColor`) for the CURRENTLY SELECTED track's row
+only, on the theory it would also show real playhead flashing during
+playback (every other row trusted this host's own shadow state instead
+— see `seq.go`'s doc). Two problems with that theory, now confirmed on
+hardware: (1) `mm_plugin.cpp`'s own `panel_state` comment already
+flagged that `mdLib` exposes no transport/playhead-meaning bit at all,
+so there was never going to be a "moves while playing" signal to read
+here; (2) whatever the live readback actually reflects doesn't line up
+with this host's own step numbering, painting a stuck, contiguous block
+across several step cells instead of individual on/off squares — and
+only changing when a pad press mutates state the readback happens to
+also reflect.
+
+**Fix**: dropped the live-readback path entirely, for both the Push
+screen/pads and the web UI. Every row — selected track included — now
+renders purely from `seqState`, the same shadow already proven correct
+for the other 5 rows (this host is the only thing that ever calls
+`toggle_step`, so it can't drift). No more special-cased row, no more
+stray bar. `push-hack-mm/src/panelstate.go`'s `StepColor` method and the
+now-dead red/yellow trig-LED pad colors (`leds.go`) were removed along
+with it — trig-LED red/yellow was never reachable through this path to
+begin with once the readback is gone.
+
+**Not hardware-confirmed yet** — compiles clean; needs a real deploy +
+SEQ-page test to confirm the bar is actually gone and normal step
+toggling still lights the right pads.
+
+## Per-track activity indicator ("VU meter per channel") added to the
+## SEQ page and the knob-grid pages
+
+Requested directly: a way to tell which of the 6 Monomachine tracks is
+currently making sound, since the hack's only meters before this were
+the single summed master level (SETTINGS page, and push-hub's own row
+VU bar) — with 6 independent synth voices, that master level can't say
+which one is active.
+
+Real per-track amplitude isn't available — `md::Device` renders one
+summed stereo buffer with no separate per-track bus this bridge could
+read a level from. What IS readable is which MIDI channels currently
+have a held note (`mm_plugin.cpp`'s already-existing `activeNotes`,
+keyed by channel = `baseChannel+track`), exposed as a new
+`get_param("track_voices")` key (JSON array of 6 active-note counts).
+`push-hack-mm/src/trackmeter.go` turns that into a per-track fraction
+that holds for 400ms after the last active reading and decays linearly,
+so a short trig doesn't just flicker for under one display tick.
+Rendered as a small fill bar per row on the SEQ page (`display.go`'s
+`renderSeqPage`, in the gutter between the track label and the step
+grid) and a small dot next to the `TRACK N` label on the knob-grid pages
+(so it's visible while tweaking a synth/filter/effects page too, not
+only on SEQ).
+
+**Not hardware-confirmed** — compiles clean (including the `mm-plugin`
+C++ side, rebuilt locally against the existing `build/` tree), but this
+environment has no ROM/hardware to actually play notes through and watch
+it move. This is an activity indicator (note held / not held, decayed),
+NOT a true loudness meter — a quiet patch and a loud patch on the same
+track will show the same bar.
+
 ## "Looks ready but Play does nothing, transport frozen, stray line on the
 ## pad grid" — the ~20s ROM boot window had zero on-screen indication
 

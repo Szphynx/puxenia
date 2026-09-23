@@ -653,7 +653,7 @@ async function transport(action) {
   } catch (e) { console.error("transport failed", e); }
 }
 
-function applySeq(seq, track) {
+function applySeq(seq) {
   if (!seqGridBuilt) buildSeqGrid();
   const offset = (seq.stepPage || 0) * 8;
   document.querySelectorAll(".seq-step").forEach((btn) => {
@@ -674,20 +674,16 @@ function applySeq(seq, track) {
   pageBtn.dataset.page = seq.stepPage || 0;
   pageBtn.textContent = (seq.stepPage || 0) === 0 ? "Steps 1-8" : "Steps 9-16";
 
-  // Overlay the currently-selected track's row with the plugin's own
-  // live step-LED colors (playhead flashing during playback) — see
-  // params.go/panelstate.go's doc on why only the selected track has a
-  // hardware-truthful readback.
-  const panel = window.__lastPanel;
-  if (panel && panel.track === track && Array.isArray(panel.steps)) {
-    document.querySelectorAll(`.seq-step[data-track="${track}"]`).forEach((btn) => {
-      const step = Number(btn.dataset.step);
-      const color = panel.steps[step];
-      if (color === 1) { btn.classList.add("on"); }
-      else if (color === 2) { btn.classList.add("on", "red"); }
-      else if (color === 3) { btn.classList.add("on", "yellow"); }
-    });
-  }
+  // No per-step overlay from the plugin's own panel_state readback here
+  // any more — it doesn't carry real playhead/transport semantics (see
+  // mm_plugin.cpp's own panel_state comment) and its step numbering could
+  // land out of step with this host's own shadow (seq.steps, set above),
+  // rendering as a stuck block of "on" cells spanning several steps
+  // instead of individual toggles — reported from real hardware as a
+  // stray bar sitting across the step grid. seq.steps is this host's own
+  // shadow (push-hack-mm/src/seq.go's doc: it's the only thing that ever
+  // calls toggle_step, so it can't drift) and is already correct for
+  // every row, selected track included.
 }
 
 // -- LCD visualizer -----------------------------------------------------
@@ -823,7 +819,7 @@ function applyState(state) {
   }
   applyTrack(state.track || 0);
   window.__lastPanel = state.panel || null;
-  applySeq(state.seq || {}, state.track || 0);
+  applySeq(state.seq || {});
   if (state.panel && state.panel.lcd) drawLCD(state.panel.lcd);
   applyIO(state.io || {});
   applyBaseChannel(state.baseChannel || 0);

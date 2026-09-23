@@ -821,6 +821,35 @@ namespace
 		if(strcmp(key, "track") == 0) return writeStr(buf, buf_len, std::to_string(inst->currentTrack));
 		if(strcmp(key, "active_voices") == 0) return writeStr(buf, buf_len, std::to_string(inst->activeNotes.size()));
 
+		if(strcmp(key, "track_voices") == 0)
+		{
+			// Per-track "is this voice currently sounding" proxy for the Go
+			// host's own per-channel activity meter (push-hack-mm/src/
+			// trackmeter.go) -- NOT a true audio level: md::Device renders
+			// one summed stereo buffer with no separate per-track bus this
+			// bridge could read a real amplitude from (see levelMeter in
+			// audiosession.go for the one real level that IS available,
+			// the mixed master output). What activeNotes already tracks
+			// (per mm_on_midi's remap: a note's MIDI channel is always
+			// baseChannel+track) is close enough for "which channel is
+			// making sound" at a glance.
+			std::array<int, kNumTracks> counts{};
+			for(const auto &n : inst->activeNotes)
+			{
+				const int track = (static_cast<int>(n.channel) - inst->baseChannel + 16) % 16;
+				if(track >= 0 && track < kNumTracks)
+					++counts[static_cast<size_t>(track)];
+			}
+			std::string json = "[";
+			for(int i = 0; i < kNumTracks; ++i)
+			{
+				if(i) json += ",";
+				json += std::to_string(counts[static_cast<size_t>(i)]);
+			}
+			json += "]";
+			return writeStr(buf, buf_len, json);
+		}
+
 		if(strcmp(key, "chain_params") == 0)
 		{
 			// See xenia_plugin.cpp's own comment on why this must be a

@@ -7,6 +7,7 @@ package main
 import "C"
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -178,6 +179,13 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 	panelKey := C.CString("panel_state")
 	defer C.free(unsafe.Pointer(panelKey))
 	panelBuf := make([]byte, 4096)
+
+	// track_voices poll — see trackmeter.go's doc. Same throttle/cadence
+	// as panel_state just above (and for the same reason: this is the one
+	// goroutine allowed to call into the plugin).
+	voicesKey := C.CString("track_voices")
+	defer C.free(unsafe.Pointer(voicesKey))
+	trackVoicesBuf := make([]byte, 256)
 
 	for {
 		select {
@@ -394,6 +402,13 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 				(*C.char)(unsafe.Pointer(&panelBuf[0])), C.int(len(panelBuf))); n >= 0 {
 				if snap, ok := decodePanelState(string(panelBuf[:n])); ok {
 					globalPanelState.set(snap)
+				}
+			}
+			if n := C.bridge_plugin_get_param(plugin, voicesKey,
+				(*C.char)(unsafe.Pointer(&trackVoicesBuf[0])), C.int(len(trackVoicesBuf))); n >= 0 {
+				var counts []int
+				if err := json.Unmarshal(trackVoicesBuf[:n], &counts); err == nil {
+					globalTrackActivity.set(counts)
 				}
 			}
 		}
