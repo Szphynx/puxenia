@@ -49,8 +49,23 @@ func probeHub(hubURL string) bool {
 // held together (debounced 500ms), toggles the on-screen param UI. Inert
 // whenever push-hub is present — hub owns this chord exclusively then,
 // and drives this hack's UI via POST /api/focus instead (webserver.go).
+//
+// Re-probes live (probeHub) rather than trusting the cached hubPresent —
+// hubPresent is only ever set once, at this process's own boot (main.go),
+// so a hack started BEFORE push-hub (or before push-hub was ever
+// installed) would otherwise keep answering Shift+Device itself forever,
+// racing push-hub's own reclaim on every press and never settling: "the
+// screens fight endlessly," reported on real hardware, with no reliable
+// key combo to escape it short of restarting this hack. A live probe on
+// every chord fire is cheap (one ~200ms-timeout local HTTP call, on a
+// user-paced action measured in seconds between presses, not a hot
+// path) and makes Shift+Device self-healing regardless of start order —
+// the moment push-hub exists, this hack notices on the very next press
+// and stands down for good. Deliberately doesn't also update the
+// package-level hubPresent here: nothing reads it again after main.go's
+// own startup use, so there's no reason to add a second writer.
 func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter, diag *diagStats) {
-	if hubPresent {
+	if probeHub(defaultHubURL) {
 		return
 	}
 

@@ -50,8 +50,19 @@ func probeHub(hubURL string) bool {
 // held together (debounced 500ms), toggles the on-screen param UI. Inert
 // whenever push-hub is present — hub owns this chord exclusively then,
 // and drives this hack's UI via POST /api/focus instead (webserver.go).
+//
+// Re-probes live (probeHub) rather than trusting the cached hubPresent —
+// see push-hack-xenia/src/chord.go's identical doc on this for the full
+// reasoning: hubPresent is only ever set once, at this process's own
+// boot, so a hack started before push-hub (or before push-hub was ever
+// installed) would otherwise keep answering Shift+Device itself forever,
+// racing push-hub's own reclaim on every press and never settling —
+// "the screens fight endlessly," with no reliable key combo to escape it
+// short of restarting this hack. A live probe on every chord fire is
+// cheap (one ~200ms-timeout local HTTP call, on a user-paced action) and
+// makes Shift+Device self-healing regardless of start order.
 func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter) {
-	if hubPresent {
+	if probeHub(defaultHubURL) {
 		return
 	}
 
