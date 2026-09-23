@@ -52,6 +52,29 @@ func focusOnly(target hackEntry, all []hackStatus) {
 	setFocus(target, true)
 }
 
+// defocusAll tells every currently-alive registered hack to release focus
+// -- called when Shift+Device reclaims the hub menu (chord.go's
+// onChordCC), before this process's own setHubUI(true). Without this, a
+// hack that still thought it was focused (nothing ever told it
+// otherwise -- reclaiming the hub only ever set the HUB's own uiOn, never
+// touched the previously-focused hack's) kept believing it owned the
+// screen even after the user explicitly asked to come back to the
+// picker: both the hub's own runHubDisplayLoop and the hack's own display
+// loop then independently kept re-asserting SetMode(2)+PushImage against
+// the same push-manager, each undoing the other's frame every tick --
+// visibly flickering back and forth, the reported "fights between xenia
+// and the hub endlessly". Same "release before claim" ordering as the
+// FOCUS-button fix in main.go's CCScreenBot1 case, just for the reverse
+// direction.
+func defocusAll(all []hackStatus) {
+	for _, st := range all {
+		if !st.Alive {
+			continue
+		}
+		setFocus(st.hackEntry, false)
+	}
+}
+
 // setServiceRunning starts or stops a registered hack. Tries the standard
 // Debian `service <name> start|stop` wrapper first (in case this install
 // really did go through push-catalog's init.d path), and falls back to
