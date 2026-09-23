@@ -90,8 +90,19 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 		if list := getStatuses(); getCursor() < len(list) {
 			target := list[getCursor()]
 			go func() {
-				focusOnly(target.hackEntry, list)
+				// Release the hub's own takeover BEFORE focusing the
+				// target, not after -- both setHubUI and the target
+				// hack's own setUI (via /api/focus) call the SAME
+				// push-manager's SetMode, and whichever call lands last
+				// wins. The old order (focus, then release) meant the
+				// hub's own SetMode(0) always fired last, clobbering the
+				// target's SetMode(2) right back off -- the screen fell
+				// through to push-manager's own idle state (Ableton's
+				// screen) instead of showing the focused hack, exactly
+				// the reported "pressing Focus just returns to Ableton's
+				// screen".
 				setHubUI(h.pmURL, false)
+				focusOnly(target.hackEntry, list)
 			}()
 		}
 	case push3.CCScreenBot2:

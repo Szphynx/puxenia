@@ -20,12 +20,21 @@ import (
 // hackEntry is one hacks.json row. Service is the assumed init.d service
 // name push-catalog installed this hack under (see focus.go's doc) --
 // verify/adjust per entry if starting/stopping ever targets the wrong
-// process.
+// process. Dir/Exec/Process/Log are the direct-process-control fallback
+// setServiceRunning uses when no such init.d service actually exists --
+// this project's own deploy.sh/deploy-all.sh scripts never install one,
+// they just nohup the binary directly (see each hack's own deploy.sh),
+// so on a real checkout of this repo the "service" path always fails and
+// this fallback is what actually starts/stops anything.
 type hackEntry struct {
 	ID      string `json:"id"`
 	Label   string `json:"label"`
 	API     string `json:"api"`
 	Service string `json:"service"`
+	Dir     string `json:"dir"`     // remote working directory -- deploy.sh's own REMOTE_DIR
+	Exec    string `json:"exec"`    // command to run from Dir -- deploy.sh's own nohup command line
+	Process string `json:"process"` // exact process name for pkill -x -- deploy.sh's own stop target
+	Log     string `json:"log"`     // log file name, relative to Dir (defaults to "<id>.log" if empty)
 }
 
 // hackStatus is one polled snapshot, refreshed by pollRegistry below.

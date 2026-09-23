@@ -3,12 +3,20 @@
     "id": "xenia",
     "label": "puXenia",
     "api": "http://localhost:7707",
-    "service": "push-xenia"
+    "service": "push-xenia",
+    "dir": "/tmp/xenia-hack",
+    "exec": "./push-xenia",
+    "process": "push-xenia",
+    "log": "push-xenia.log"
   },
   {
     "id": "mm",
     "label": "puMMa",
     "api": "http://localhost:7708",
-    "service": "push-mm"
+    "service": "push-mm",
+    "dir": "/tmp/mm-hack",
+    "exec": "./push-mm -config hack.json",
+    "process": "push-mm",
+    "log": "push-mm.log"
   }
 ]

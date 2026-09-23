@@ -52,26 +52,70 @@ func focusOnly(target hackEntry, all []hackStatus) {
 	setFocus(target, true)
 }
 
-// setServiceRunning starts or stops a registered hack's init.d service via
-// the standard Debian `service <name> start|stop` wrapper.
-//
-// ASSUMPTION, not verified against real push-catalog install output: this
-// repo's own docs (docs/push-hack-framework-notes.md) confirm push-catalog
-// installs each hack as an init.d service launched via start-stop-daemon,
-// but not the exact script name it assigns. hacks.json's "service" field
-// is currently set to each hack's own binary name ("push-xenia"/
-// "push-mm") as the best available guess -- if push-catalog names the
-// installed script differently, fix hacks.json's "service" values to
-// match rather than this code; the mechanism itself (service start/stop)
-// should still be right.
+// setServiceRunning starts or stops a registered hack. Tries the standard
+// Debian `service <name> start|stop` wrapper first (in case this install
+// really did go through push-catalog's init.d path), and falls back to
+// direct process control (nohup relaunch / pkill -x) otherwise -- this
+// repo's own deploy.sh/deploy-all.sh scripts (the actual, established way
+// every hack in this project gets deployed) never register an init.d
+// service at all, they just `nohup ./push-xenia &` (or push-mm) directly
+// over ssh, so on a real checkout `service push-xenia start` always fails
+// with "unrecognized service" and used to just silently do nothing --
+// the reported "pressing Start does nothing".
 func setServiceRunning(e hackEntry, on bool) error {
 	action := "stop"
 	if on {
 		action = "start"
 	}
-	out, err := exec.Command("service", e.Service, action).CombinedOutput()
+	if e.Service != "" {
+		if out, err := exec.Command("service", e.Service, action).CombinedOutput(); err == nil {
+			return nil
+		} else {
+			log.Printf("service %s %s: %v (%s) -- falling back to direct process control",
+				e.Service, action, err, strings.TrimSpace(string(out)))
+		}
+	}
+	if on {
+		return startDirect(e)
+	}
+	return stopDirect(e)
+}
+
+// stopDirect kills a hack's process directly -- -x (exact name match), not
+// -f, same reasoning as every deploy.sh in this repo: -f matches full
+// command lines, and pkill's own one-shot invocation here would otherwise
+// risk matching its own wrapping process. pkill's exit code 1 means
+// "nothing matched", which for a stop request is success, not an error.
+func stopDirect(e hackEntry) error {
+	if e.Process == "" {
+		return fmt.Errorf("no \"process\" configured for %s in hacks.json -- can't stop it directly", e.ID)
+	}
+	out, err := exec.Command("pkill", "-x", e.Process).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("service %s %s: %w (%s)", e.Service, action, err, strings.TrimSpace(string(out)))
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return nil
+		}
+		return fmt.Errorf("pkill -x %s: %w (%s)", e.Process, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// startDirect relaunches a hack the same way its own deploy.sh does:
+// nohup'd, detached, logging to Dir/Log. sh -c backgrounds the command and
+// exits immediately once it has, so CombinedOutput() returns quickly
+// without waiting on the (now detached) hack process itself.
+func startDirect(e hackEntry) error {
+	if e.Dir == "" || e.Exec == "" {
+		return fmt.Errorf("no \"dir\"/\"exec\" configured for %s in hacks.json -- can't start it directly", e.ID)
+	}
+	logFile := e.Log
+	if logFile == "" {
+		logFile = e.ID + ".log"
+	}
+	cmd := fmt.Sprintf("cd %s && nohup %s > %s 2>&1 &", e.Dir, e.Exec, logFile)
+	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("direct start: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

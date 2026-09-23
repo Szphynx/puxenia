@@ -229,13 +229,36 @@ re-discovering later.
   directly (bottom-screen button 2 in the menu), not just arbitrate focus
   between already-running processes. Implemented via the standard
   `service <name> start|stop` wrapper (`push-hub/src/focus.go`).
-  **Unverified assumption**: `hacks.json`'s `"service"` field is set to
-  each hack's own binary name (`push-xenia`/`push-mm`) as the best
-  available guess at push-catalog's init.d script naming — this repo's
-  docs confirm start-stop-daemon is the real mechanism
-  (`docs/push-hack-framework-notes.md`) but not the exact script name per
-  hack. Fix `hacks.json` if a real install names it differently; the
-  mechanism itself should still be right.
+  **Confirmed wrong on first real hardware test**: nothing this repo's
+  own `deploy.sh`/`deploy-all.sh` scripts do ever registers an init.d
+  service — they `nohup` the binary directly over ssh (see each hack's
+  own `deploy.sh`) — so `service push-xenia start` always failed with
+  "unrecognized service" on a real checkout, and START silently did
+  nothing. Fixed: `setServiceRunning` now tries the `service` wrapper
+  first (kept in case some install really did go through push-catalog),
+  and falls back to direct process control (`pkill -x` to stop, a
+  `nohup`'d relaunch matching each hack's own `deploy.sh` command to
+  start) using new `hacks.json` fields (`"dir"`/`"exec"`/`"process"`/
+  `"log"`) when it fails.
+- **Focus ordering bug, also found on first real hardware test**: pressing
+  FOCUS visibly returned to Ableton's own screen instead of showing the
+  target hack. Root cause: `setHubUI`/each hack's own `setUI` both call
+  the *same* push-manager's `SetMode`, and the hub's menu code released
+  its own takeover (`SetMode(0)`) *after* focusing the target (which had
+  just set `SetMode(2)`) — whichever call lands last wins, so the hub's
+  own release always clobbered the target's takeover right back off.
+  Fixed by reordering: release the hub's takeover *before* focusing the
+  target (`push-hub/src/main.go`'s `CCScreenBot1` case), so the target's
+  `SetMode(2)` is the one left standing.
+- **"PUSH HUB" title clipped at the top of the screen**, also found on
+  first real hardware test: `text.DrawScaled`'s y parameter is the text
+  *baseline*, and the glyph extends upward from it by the font's
+  ascent×scale — at the original `baseline=14, scale=2`, Tamzen7x13's
+  glyphs actually span y=[-2,11], so the top ~2px were silently clipped
+  by the screen buffer's 0-origin. Fixed by moving the baseline to 18
+  (confirmed via a standalone render into an unclipped canvas, not
+  guessed) — still well inside the 16px top strip reserved for it before
+  the first hack row starts.
 - **No browser UI for push-hub itself in v1** — this proposal already
   called that optional. `push-hub` exposes `GET /api/hub/state` (a plain
   JSON dump of the same status the on-screen menu shows) for scripted/
