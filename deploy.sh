@@ -13,6 +13,16 @@
 #   ROM_DIR=~/xenia-build/rom          (local dir with the .bin ROM files)
 #   REPO_DIR=~/puxenia                 (this repo's checkout)
 #   NO_BUILD=1                         (skip the build step, just redeploy)
+#   BACKGROUND=1                       (launch detached via nohup + log file,
+#                                        same as push-hack-mm/push-hub's own
+#                                        deploy.sh, instead of the default
+#                                        interactive `ssh -t` foreground
+#                                        session -- used by deploy-all.sh so
+#                                        Xenia doesn't block the other hacks'
+#                                        deploys; the default stays
+#                                        interactive since that's this
+#                                        project's own established solo
+#                                        workflow)
 set -euo pipefail
 
 # go.mod needs a real 1.25+ toolchain; apt's golang-go (1.18) doesn't cut
@@ -38,7 +48,13 @@ else
 fi
 
 echo "==> Stopping any running push-xenia on Push"
-ssh_ "pkill -f push-xenia" || true
+# -x (exact process-name match), not -f: -f matches full command lines, and
+# a one-shot ssh command executes remotely as `bash -c 'pkill -f push-xenia
+# || true'` -- that wrapping bash's own command line contains the literal
+# substring "push-xenia", so pkill -f can match and kill it before "||
+# true" ever runs, dropping the ssh session and aborting this script (set
+# -e) with no further output. Same bug, same fix, as push-hack-mm/deploy.sh.
+ssh_ "pkill -x push-xenia" || true
 
 echo "==> Ensuring remote directories exist"
 ssh_ "mkdir -p '$REMOTE_DIR/module' '$REMOTE_DIR/ui'"
@@ -95,5 +111,11 @@ if ! ssh_ "grep -qE '^\s*[0-9]+ \[Audio *\]' /proc/asound/cards 2>/dev/null"; th
     fi
 fi
 
-echo "==> Launching push-xenia (Ctrl+C to stop)"
-ssh -t -i "$PUSH_KEY" "root@${PUSH_HOST}" "cd $REMOTE_DIR && chmod +x push-xenia && ./push-xenia"
+if [[ "${BACKGROUND:-}" == "1" ]]; then
+    echo "==> Launching push-xenia detached (BACKGROUND=1)"
+    ssh_ "cd $REMOTE_DIR && chmod +x push-xenia && nohup ./push-xenia > push-xenia.log 2>&1 &"
+    echo "Deployed and (re)launched. Logs: ssh -i $PUSH_KEY root@${PUSH_HOST} tail -f $REMOTE_DIR/push-xenia.log"
+else
+    echo "==> Launching push-xenia (Ctrl+C to stop)"
+    ssh -t -i "$PUSH_KEY" "root@${PUSH_HOST}" "cd $REMOTE_DIR && chmod +x push-xenia && ./push-xenia"
+fi
