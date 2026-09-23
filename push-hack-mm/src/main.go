@@ -107,6 +107,7 @@ type midiHandler struct {
 	seq     *seqState
 	rt      *sharedConfig
 	level   *levelMeter
+	diag    *diagStats
 }
 
 func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
@@ -137,7 +138,7 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 		val := uint8(binary.LittleEndian.Uint32(data[8:]) & 0x7F)
 
 		if cc == ccShift || cc == ccDevice {
-			onChordCC(cc, val, h.pmURL, h.params, h.io, h.astatus, h.seq, h.level)
+			onChordCC(cc, val, h.pmURL, h.params, h.io, h.astatus, h.seq, h.level, h.diag)
 			return
 		}
 
@@ -161,7 +162,7 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 			// already back to native Push/Live. Shift+Device (hub-owned)
 			// is the only way back to the picker once hub is installed.
 			if !hubPresent {
-				go toggleUI(h.pmURL, h.params, h.io, h.astatus, h.seq, h.level)
+				go toggleUI(h.pmURL, h.params, h.io, h.astatus, h.seq, h.level, h.diag)
 			}
 			return
 		case cc == push3.CCScreenBot4 && val == 127 && h.params.Page() == pageSettings:
@@ -418,12 +419,12 @@ func runSupervised() {
 	seq := newSeqState()
 
 	go runDependencyWatcher(pmURL)
-	go runDisplayLoop(pmURL, params, io, astatus, seq, level)
+	go runDisplayLoop(pmURL, params, io, astatus, seq, level, diag)
 
 	midiCh := make(chan [3]byte, 256)
 	ctlCh := make(chan controlEvent, 64)
 	ctlChWrite = ctlCh
-	handler := &midiHandler{out: midiCh, ctl: ctlCh, pmURL: pmURL, params: params, io: io, astatus: astatus, seq: seq, rt: rt, level: level}
+	handler := &midiHandler{out: midiCh, ctl: ctlCh, pmURL: pmURL, params: params, io: io, astatus: astatus, seq: seq, rt: rt, level: level, diag: diag}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

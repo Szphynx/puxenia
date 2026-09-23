@@ -61,7 +61,7 @@ func probeHub(hubURL string) bool {
 // short of restarting this hack. A live probe on every chord fire is
 // cheap (one ~200ms-timeout local HTTP call, on a user-paced action) and
 // makes Shift+Device self-healing regardless of start order.
-func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter) {
+func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter, diag *diagStats) {
 	if probeHub(defaultHubURL) {
 		return
 	}
@@ -84,7 +84,7 @@ func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus 
 	chordMu.Unlock()
 
 	if fire {
-		go toggleUI(pmURL, st, io, astatus, seq, level)
+		go toggleUI(pmURL, st, io, astatus, seq, level, diag)
 	}
 }
 

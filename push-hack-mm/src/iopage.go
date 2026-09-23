@@ -327,7 +327,7 @@ func (io *ioState) SetRecvChannelByIndex(i int) error {
 const settingsRowH = 13
 const settingsColW = 2 * cellW
 
-func (io *ioState) render() *image.NRGBA {
+func (io *ioState) render(level *levelMeter) *image.NRGBA {
 	io.mu.Lock()
 	defer io.mu.Unlock()
 
@@ -348,7 +348,7 @@ func (io *ioState) render() *image.NRGBA {
 		}
 		midiLabels[i] = mark + r.label
 	}
-	drawSettingsColumn(img, 0*settingsColW, "MIDI IN", midiLabels, io.midiCursor)
+	drawSettingsColumn(img, 0*settingsColW, "MIDI IN", midiLabels, io.midiCursor, 34)
 
 	deviceRows := io.buildDeviceRowsLocked()
 	deviceLabels := make([]string, len(deviceRows))
@@ -359,7 +359,15 @@ func (io *ioState) render() *image.NRGBA {
 		}
 		deviceLabels[i] = mark + r.label
 	}
-	drawSettingsColumn(img, 1*settingsColW, "AUDIO OUTPUT", deviceLabels, io.deviceCursor)
+	// Live output level bar, same rowsTop=46/dbFrac treatment as
+	// push-hack-xenia's own AUDIO OUTPUT column -- this was previously
+	// never wired up at all: render() didn't even receive a *levelMeter,
+	// so puMMa's SETTINGS page had no live-level readout unlike puXenia's.
+	t := widgets.Default
+	gfx.FillRect(img, 1*settingsColW+4, 34, settingsColW-12, 4, t.Black)
+	barW := int(dbFrac(level.get()) * float64(settingsColW-12))
+	gfx.FillRect(img, 1*settingsColW+4, 34, barW, 4, t.White)
+	drawSettingsColumn(img, 1*settingsColW, "AUDIO OUTPUT", deviceLabels, io.deviceCursor, 46)
 
 	channelRows := io.buildChannelRowsLocked()
 	channelLabels := make([]string, len(channelRows))
@@ -370,7 +378,7 @@ func (io *ioState) render() *image.NRGBA {
 		}
 		channelLabels[i] = mark + r.label
 	}
-	drawSettingsColumn(img, 2*settingsColW, "AUDIO CHANNEL", channelLabels, io.channelCursor)
+	drawSettingsColumn(img, 2*settingsColW, "AUDIO CHANNEL", channelLabels, io.channelCursor, 34)
 
 	curRecvCh := io.rt.getRecvChannel()
 	recvChRows := io.buildRecvChannelRowsLocked()
@@ -382,7 +390,7 @@ func (io *ioState) render() *image.NRGBA {
 		}
 		recvChLabels[i] = mark + r.label
 	}
-	drawSettingsColumn(img, 3*settingsColW, "MIDI CHANNEL", recvChLabels, io.recvChCursor)
+	drawSettingsColumn(img, 3*settingsColW, "MIDI CHANNEL", recvChLabels, io.recvChCursor, 34)
 
 	var bottom [8]widgets.SoftButton
 	bottom[0] = widgets.SoftButton{Label: "SET"}
@@ -403,11 +411,15 @@ func (io *ioState) render() *image.NRGBA {
 	return img
 }
 
-func drawSettingsColumn(img *image.NRGBA, x int, title string, labels []string, cursor int) {
+// drawSettingsColumn draws one column's title + scrollable row list.
+// rowsTop lets a caller reserve extra space between the title and the
+// rows -- AUDIO OUTPUT's own call site uses this to fit the live level
+// bar in (see render()); every other column just passes the default 34.
+func drawSettingsColumn(img *image.NRGBA, x int, title string, labels []string, cursor int, rowsTop int) {
 	t := widgets.Default
 	text.Draw(img, x+4, 28, title, t.Gray)
 
-	const top = 34
+	top := rowsTop
 	visRows := (screenH - top) / settingsRowH
 	scroll := cursor - visRows/2
 	if scroll < 0 {

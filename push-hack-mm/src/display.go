@@ -13,6 +13,7 @@ import (
 	"image"
 	"image/color"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -128,17 +129,27 @@ func renderTopTabs(img *image.NRGBA, t widgets.Theme, current int) {
 	widgets.DrawBotStrip(img, t, 0, screenW, cellW, topStripH, top, "")
 }
 
-// renderParamPage draws the current page: the "not ready" OSD first, else
-// the knob grid, SEQ, or SETTINGS.
-func renderParamPage(st *paramState, io *ioState, astatus *audioStatus, seq *seqState) *image.NRGBA {
+// renderParamPage draws the current page: the "not ready" OSD first
+// (astatus -- ALSA/Live not open yet), then the "still booting" OSD
+// (diag.getReady() -- the emulated ROM's own ~20s real-device-time boot,
+// see mm_plugin.cpp's isBooting()/kBootSeconds, gates ALL MIDI/panel
+// input until it completes and was previously invisible from the
+// screen: a normal-looking, navigable UI that silently dropped every
+// Play/pad press with zero on-screen indication why, easily read as
+// "broken" rather than "still booting" -- reported as "looks functional
+// but there's no playing"), else the knob grid, SEQ, or SETTINGS.
+func renderParamPage(st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter, diag *diagStats) *image.NRGBA {
 	if ready, msg := astatus.get(); !ready {
 		return renderWaitingScreen(msg)
+	}
+	if !diag.getReady() {
+		return renderBootingScreen()
 	}
 	switch st.Page() {
 	case pageSeq:
 		return renderSeqPage(st, seq)
 	case pageSettings:
-		return io.render()
+		return io.render(level)
 	default:
 		return renderKnobGrid(st)
 	}
@@ -288,6 +299,25 @@ func renderSeqPage(st *paramState, seq *seqState) *image.NRGBA {
 	return img
 }
 
+// meterMinDB/dbFrac -- identical to push-hack-xenia's own display.go: a
+// linear 0-1 peak reads as "stuck near empty" on a linear fader for
+// normal program material (nearly all its range spent near zero), so
+// convert to a dB scale before drawing the AUDIO OUTPUT level bar
+// (iopage.go's render). -48dB floor maps to an empty fader, 0dB (full
+// scale) to a full one.
+const meterMinDB = -48.0
+
+func dbFrac(peak float64) float64 {
+	if peak <= 0 {
+		return 0
+	}
+	db := 20 * math.Log10(peak)
+	if db < meterMinDB {
+		return 0
+	}
+	return (db - meterMinDB) / -meterMinDB
+}
+
 func itoaSimple(n int) string {
 	if n < 10 {
 		return string(rune('0' + n))
@@ -307,6 +337,30 @@ func renderWaitingScreen(msg string) *image.NRGBA {
 	return img
 }
 
+// renderBootingScreen is shown in place of the normal UI while the
+// emulated ROM's own real-device-time boot (~20-22s, mm_plugin.cpp's
+// kBootSeconds) is still in progress -- ALSA/Live's side is already up
+// by this point (renderParamPage checks astatus first), but every MIDI/
+// panel command sent during this window is silently dropped by
+// mm_plugin.cpp's own isBooting() gate, previously with no on-screen
+// indication this was even happening. Pulsing dots, same breathing-
+// brightness technique as push-hub's own loading splash, so it visibly
+// reads as "still working," not frozen.
+func renderBootingScreen() *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, screenW, screenH))
+	gfx.FillRect(img, 0, 0, screenW, screenH, mmChassis)
+	text.DrawScaled(img, 8, 26, 2, "Monomachine booting...", mmInk)
+	text.Draw(img, 8, 46, "Real hardware boot takes ~20s.", widgets.Default.Gray)
+	text.Draw(img, 8, 62, "MIDI/pads are ignored until it finishes.", widgets.Default.Gray)
+
+	const period = 1200 * time.Millisecond
+	phase := float64(time.Now().UnixMilli()%period.Milliseconds()) / float64(period.Milliseconds())
+	dots := int(phase*4) % 4 // 0..3 dots, cycling
+	dotStr := strings.Repeat(".", dots)
+	text.Draw(img, 8, 80, dotStr, mmAmber)
+	return img
+}
+
 // toggleUI flips the on-screen param UI, same shape as push-hack-xenia's
 // own — plus clearing pad LEDs on the way out, since Xenia never lit pads
 // at all.
@@ -314,11 +368,11 @@ func renderWaitingScreen(msg string) *image.NRGBA {
 // (chord.go). setUI does the actual work; both this and push-hub's
 // POST /api/focus (webserver.go's handleFocus) call it directly rather
 // than duplicating the takeover logic.
-func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter) {
+func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter, diag *diagStats) {
 	uiMu.Lock()
 	next := !uiOn
 	uiMu.Unlock()
-	setUI(pmURL, next, st, io, astatus, seq, level)
+	setUI(pmURL, next, st, io, astatus, seq, level, diag)
 }
 
 // setUI enters takeover mode (push-manager's display + MIDI intercept,
@@ -326,7 +380,7 @@ func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, s
 // the native Push UI / normal Live routing — an absolute set, not a
 // toggle, so two independent callers (local Shift+Device and push-hub's
 // HTTP-driven focus) never fight over one boolean's parity.
-func setUI(pmURL string, on bool, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter) {
+func setUI(pmURL string, on bool, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter, diag *diagStats) {
 	uiMu.Lock()
 	uiOn = on
 	uiMu.Unlock()
@@ -347,7 +401,7 @@ func setUI(pmURL string, on bool, st *paramState, io *ioState, astatus *audioSta
 		uiMu.Lock()
 		lastPage = page
 		uiMu.Unlock()
-		if err := client.PushImage(renderParamPage(st, io, astatus, seq)); err != nil {
+		if err := client.PushImage(renderParamPage(st, io, astatus, seq, level, diag)); err != nil {
 			log.Printf("display: push frame: %v", err)
 		}
 		log.Printf("puMMa: UI ON (Shift+Device) — MIDI intercept enabled")
@@ -374,7 +428,7 @@ func shutdownUI(pmURL string) {
 // (control-surface on page change; pad grid on EVERY tick while SEQ is
 // active, since step/mute/track-highlight state can change from the web
 // UI too, not just Push's own pads).
-func runDisplayLoop(pmURL string, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter) {
+func runDisplayLoop(pmURL string, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter, diag *diagStats) {
 	client := pmclient.New(pmURL)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -403,7 +457,7 @@ func runDisplayLoop(pmURL string, st *paramState, io *ioState, astatus *audioSta
 			syncPadLEDs(seq, st)
 		}
 
-		if err := client.PushImage(renderParamPage(st, io, astatus, seq)); err != nil {
+		if err := client.PushImage(renderParamPage(st, io, astatus, seq, level, diag)); err != nil {
 			log.Printf("display: push frame: %v", err)
 		}
 	}

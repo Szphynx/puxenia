@@ -142,7 +142,7 @@ func (ws *webServer) handleFocus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setFocused(body.On)
-	setUI(ws.pmURL, body.On, ws.params, ws.io, ws.astatus, ws.seq, ws.level)
+	setUI(ws.pmURL, body.On, ws.params, ws.io, ws.astatus, ws.seq, ws.level, ws.diag)
 	w.WriteHeader(http.StatusNoContent)
 }
 

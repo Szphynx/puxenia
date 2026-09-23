@@ -9,6 +9,46 @@ not full-manual-verified. Treat unverified items the same way
 `monomachine-port-notes.md` already treats its own open assumptions: don't
 re-guess them, go straight to hardware/manual when available.
 
+## "Looks ready but Play does nothing, transport frozen, stray line on the
+## pad grid" — the ~20s ROM boot window had zero on-screen indication
+
+Reported on real hardware, standalone (bypassing push-hub): the screen
+was fully navigable (not stuck on the ALSA "not ready" OSD) but pressing
+Play produced no sound, the transport never visibly moved, and the SEQ
+page's pad grid showed a static horizontal band sitting in the grid,
+obstructing the step rows.
+
+Root cause: `astatus` (ALSA/Live session open) and the emulated ROM's
+OWN internal boot state (`mm_plugin.cpp`'s `isBooting()`/
+`kBootSeconds`, ~20-22s of real device-time, gates ALL MIDI/panel input
+until it completes — established and already handled internally
+earlier in this project, see `pumma-troubleshooting-directives.md`) are
+two separate readiness signals. The screen only ever checked the first
+one. A user who reaches the normal-looking UI and starts pressing
+buttons within that ~20s window gets every command silently dropped —
+by design, to avoid desyncing Go-side shadow state — with **no visual
+indication the device just wasn't listening yet**. The "stray line" was
+very likely just `panel_state`'s boot-time/default readback snapshot,
+rendered as if it were a real live pad-LED pattern.
+
+**Fix**: `diag.getReady()` (already tracked, mirrors `get_param(
+"ready")`, previously only polled for `/api/state` and the terminal
+"progress" log line) is now also checked by the on-screen renderer
+(`renderParamPage`, threaded through `toggleUI`/`setUI`/
+`runDisplayLoop`/`chord.go`/`webserver.go`'s `handleFocus`). While not
+ready, a dedicated "Monomachine booting..." screen with a pulsing
+indicator shows instead of the normal UI, so a user can no longer
+mistake "still booting" for "broken."
+
+**Not hardware-confirmed** — compiles clean, but this environment has no
+ROM/hardware to actually watch the boot window through to reproduce and
+re-test. If the reported symptoms persist even after waiting for this
+new screen to clear on its own, this was NOT the (or not the whole)
+cause, and the pad-order/no-sound question needs re-investigating with
+exact reproduction steps (which physical pad was pressed, which step
+lit up, in what color) rather than guessed at further — see this doc's
+own "empirical proof, not guessing" directive.
+
 ## Full sequencing audit (requested before further real-hardware testing)
 
 Went through every sequencing-related path end to end (`seq.go`,
