@@ -411,6 +411,20 @@ func runSupervised() {
 	hubPresent = probeHub(defaultHubURL)
 	if hubPresent {
 		log.Printf("push-hub detected at %s — local Shift+Device disabled, focus is hub-controlled", defaultHubURL)
+		// focused defaults true (display.go's var block) for the
+		// standalone-no-hub case, where nothing else would ever set it.
+		// With a hub present, default the other way instead: this
+		// process was likely just launched by the hub's own START button
+		// (focus.go's startDirect), and nothing has explicitly focused it
+		// yet at this point -- defaulting true meant a freshly-started,
+		// not-yet-focused hack was immediately audible (audiosession.go's
+		// isFocused() gate) and would fight the hub for the screen the
+		// instant it opened its own UI, exactly the class of bug behind
+		// the reported "focus feature is still very buggy". POST
+		// /api/focus {"on":true} (webserver.go's handleFocus) is the only
+		// thing that should ever flip this back to true once a hub is
+		// present.
+		setFocused(false)
 	}
 
 	// The audio render goroutine itself is allocation-free (all buffers

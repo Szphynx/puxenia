@@ -29,9 +29,11 @@ var (
 	chordLastFire time.Time
 )
 
-// onChordCC reclaims the hub menu whenever Shift+Device fires -- an
-// idempotent setHubUI(true), so it's harmless to fire again while the
-// menu's already showing.
+// onChordCC reclaims the hub menu whenever Shift+Device fires. Also tells
+// every registered hack to defocus first (defocusAll, focus.go) -- see
+// its doc for why: setHubUI(true) alone is idempotent for the hub's own
+// state, but leaves whichever hack was previously focused still believing
+// it owns the screen, fighting the hub's own display loop for it.
 func onChordCC(cc, val byte, pmURL string) {
 	chordMu.Lock()
 	if val > 0 {
@@ -51,6 +53,9 @@ func onChordCC(cc, val byte, pmURL string) {
 	chordMu.Unlock()
 
 	if fire {
-		go setHubUI(pmURL, true)
+		go func() {
+			defocusAll(getStatuses())
+			setHubUI(pmURL, true)
+		}()
 	}
 }
