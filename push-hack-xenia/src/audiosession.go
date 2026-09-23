@@ -86,34 +86,73 @@ func alogf(format string, args ...interface{}) {
 // original authors) can wedge. The on-screen value still updates every
 // tick via applyEncoder's own nudgeSlotLocked call (immediate, screen-only
 // -- see params.go); only the actual device-facing MIDI commit is delayed
-// here, and only for "program" (every other param already has its own
-// per-param settle behavior via stepFor/sensitivityFor and isn't flooding
-// the device at anywhere near this rate).
+// here.
 const programDebounceDelay = 200 * time.Millisecond
 
+// paramDebounceDelay coalesces rapid same-key param commits for every
+// OTHER param (not "program", which gets its own longer delay above) --
+// see xenia-plugin's xenia_plugin.cpp: most of Xenia's 82 params dispatch
+// as a 10-byte SysEx Single Parameter Change, not a 3-byte CC, since the
+// device only directly recognizes 7 CCs (see docs/xenia-gearmulator-
+// notes.md). gearmulator's own SciMidi (hardwareLib/sciMidi.cpp) paces
+// outgoing SysEx at a fixed rate (~0.1s/500 bytes, i.e. each 10-byte
+// packet serializes for ~2ms of real device-time before the next queued
+// one can even start draining into the emulated UART) -- realistic
+// hardware-accurate modeling of a real 31.25kbaud MIDI cable, but it means
+// a fast continuous knob turn (Push's encoder sends a delta message per
+// detent, and a brisk flick can fire a dozen within a second -- see
+// nudgeSlotLocked's own doc on DecodeRel's range) or a dragged web-UI
+// slider queues SysEx messages faster than the emulated device can drain
+// them, and the audible parameter change visibly lags/drags behind the
+// physical motion while the backlog empties -- this is the most likely
+// cause of the "hangs and drags on sounds" regression reported after
+// params.go's params were converted from plain CC to this SysEx
+// mechanism. Same fix shape as scheduleProgramCommit: only the final
+// value in a burst is device-facing, coalesced per key so unrelated
+// params don't block each other. 30ms is short enough to be inaudible as
+// added latency on a single turn, long enough to collapse a whole fast
+// flick into one commit.
+const paramDebounceDelay = 30 * time.Millisecond
+
 var (
-	programDebounceMu    sync.Mutex
-	programDebounceTimer *time.Timer
+	paramDebounceMu     sync.Mutex
+	paramDebounceTimers = make(map[string]*time.Timer)
 	// ctlChWrite is a writable handle onto the same channel main.go passes
 	// everywhere else as receive-only (<-chan controlEvent) -- the timer
-	// goroutine scheduleProgramCommit starts needs to send back into it,
-	// which a <-chan-typed parameter can't do. Set once in main() right
-	// after the channel is created, before anything starts using it.
+	// goroutines scheduleProgramCommit/scheduleParamCommit start need to
+	// send back into it, which a <-chan-typed parameter can't do. Set once
+	// in main() right after the channel is created, before anything starts
+	// using it.
 	ctlChWrite chan<- controlEvent
 )
 
 func scheduleProgramCommit(val string) {
-	programDebounceMu.Lock()
-	defer programDebounceMu.Unlock()
-	if programDebounceTimer != nil {
-		programDebounceTimer.Stop()
+	scheduleKeyedCommit("program", val, programDebounceDelay)
+}
+
+// scheduleParamCommit is scheduleProgramCommit's generic counterpart for
+// every other device-facing param -- see paramDebounceDelay's doc above.
+func scheduleParamCommit(key, val string) {
+	scheduleKeyedCommit(key, val, paramDebounceDelay)
+}
+
+func scheduleKeyedCommit(key, val string, delay time.Duration) {
+	paramDebounceMu.Lock()
+	defer paramDebounceMu.Unlock()
+	if t := paramDebounceTimers[key]; t != nil {
+		t.Stop()
 	}
 	fval, _ := strconv.ParseFloat(val, 64)
-	programDebounceTimer = time.AfterFunc(programDebounceDelay, func() {
+	paramDebounceTimers[key] = time.AfterFunc(delay, func() {
 		select {
-		case ctlChWrite <- controlEvent{kind: ctlSetParam, key: "program", val: fval}:
+		// ctlCommitParam, not ctlSetParam -- see ctlCommitParam's doc in
+		// main.go. Replaying as ctlSetParam here would re-enter drainCtl's
+		// ctlSetParam case, which schedules another debounced commit
+		// instead of ever actually writing to the device -- an infinite
+		// loop that silently drops every parameter change.
+		case ctlChWrite <- controlEvent{kind: ctlCommitParam, key: key, val: fval}:
 		default:
-			log.Printf("control channel full, dropped debounced program commit")
+			log.Printf("control channel full, dropped debounced %s commit", key)
 		}
 	})
 }
@@ -395,7 +434,7 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 							params.movePresetCursor(ev.delta)
 						case 1:
 							if val, ok := params.NudgeOctave(ev.delta); ok {
-								cSetParam(plugin, "octave_transpose", val)
+								scheduleParamCommit("octave_transpose", val)
 							}
 						case 2:
 							// Bank Select (Microwave XT sound bank, e.g.
@@ -404,7 +443,7 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 							// grid). See xenia_plugin.cpp's "bank" kParams
 							// entry for why the range is a placeholder.
 							if val, ok := params.NudgeBank(ev.delta); ok {
-								cSetParam(plugin, "bank", val)
+								scheduleParamCommit("bank", val)
 							}
 						}
 					case pageSettings:
@@ -420,22 +459,39 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 						}
 						params.MarkDirty()
 					default:
+						// Every device-facing commit here goes through the
+						// debounce map (paramDebounceDelay for everything
+						// except "program", which keeps its own longer
+						// delay) rather than a direct cSetParam -- see
+						// paramDebounceDelay's doc for why: most of these
+						// keys dispatch as a paced SysEx Single Parameter
+						// Change (xenia_plugin.cpp), and a fast continuous
+						// encoder turn can queue them faster than the
+						// emulated device drains them, which is the most
+						// likely cause of the reported "hangs and drags on
+						// sounds" -- the on-screen value still updates
+						// immediately via applyEncoder's own
+						// nudgeSlotLocked call just above, only the actual
+						// device write is coalesced.
 						if key, val, ok := params.applyEncoder(ev.idx, ev.delta); ok {
 							if key == "program" {
 								scheduleProgramCommit(val)
 							} else {
-								cSetParam(plugin, key, val)
+								scheduleParamCommit(key, val)
 							}
 						}
 					}
 
 				case ctlSetParam:
 					// Absolute write from the web UI (see webserver.go) —
-					// same goroutine, same cSetParam call as every other
-					// case here, just not keyed off Push hardware. "preset"
-					// is this host's own staged browse-list key (see
-					// params.go's fetchPresetMeta) -- redirect the actual
-					// device write to "program", same as the Load
+					// same goroutine, same debounced commit as every other
+					// case here, just not keyed off Push hardware. A
+					// dragged web-UI slider fires just as fast as a brisk
+					// hardware encoder turn, so it needs the same
+					// paramDebounceDelay coalescing (see that const's doc).
+					// "preset" is this host's own staged browse-list key
+					// (see params.go's fetchPresetMeta) -- redirect the
+					// actual device write to "program", same as the Load
 					// button's path above.
 					if val, ok := params.SetParam(ev.key, ev.val); ok {
 						deviceKey := ev.key
@@ -447,7 +503,23 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 							// case, via scheduleProgramCommit).
 							params.SetParam("program", ev.val)
 						}
-						cSetParam(plugin, deviceKey, val)
+						if deviceKey == "program" {
+							scheduleProgramCommit(val)
+						} else {
+							scheduleParamCommit(deviceKey, val)
+						}
+					}
+
+				case ctlCommitParam:
+					// A debounce timer's own settled value (see
+					// scheduleKeyedCommit) -- terminal, commits straight to
+					// the device with no further scheduling. params.SetParam
+					// re-clamps/reformats (idempotent -- the value was
+					// already valid when it was scheduled) so cSetParam
+					// gets the same string form every other commit path
+					// uses.
+					if val, ok := params.SetParam(ev.key, ev.val); ok {
+						cSetParam(plugin, ev.key, val)
 					}
 				}
 			default:
@@ -550,6 +622,20 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 			name, _ := cGetParam(plugin, "lcd_patch_name")
 			diag.setPatchDisplay(id, name)
 			params.LearnPresetName(params.LoadedPresetIndex(), id, name)
+
+			// Re-pull every param's live value off the plugin -- normally a
+			// no-op (paramValues on the C++ side already mirrors whatever
+			// this host last set_param'd), but a Program Change silently
+			// replaces the device's ENTIRE current patch server-side, and
+			// xenia_plugin.cpp now opportunistically captures the real
+			// post-load values via a Single Dump readback (see its
+			// drainSingleDumpResponse). Piggybacking on this existing 2s
+			// tick, instead of a fixed delay timed off the debounced
+			// Program Change commit, means this self-corrects regardless of
+			// how long the device actually takes to answer the dump
+			// request -- exactly the reported "the knobs do not move
+			// according to what preset is selected" symptom.
+			params.syncFromPluginState(plugin)
 
 			alogf("progress: blocks=%d slow=%d maxPre=%v maxWrite=%v cpu=%.1f%% voices=%d",
 				blocks, slowBlocks, maxPre, maxWrite, cpuPct, diag.getVoices())
