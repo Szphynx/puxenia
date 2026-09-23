@@ -144,7 +144,15 @@ func runHubDisplayLoop(pmURL string, shutdown <-chan struct{}) {
 func renderMenu() *image.NRGBA {
 	img := image.NewNRGBA(image.Rect(0, 0, screenW, screenH))
 	gfx.FillRect(img, 0, 0, screenW, screenH, hubBG)
-	text.DrawScaled(img, 8, 14, 2, "PUSH HUB", hubInk)
+	// DrawScaled's y is the text BASELINE, and the glyph extends upward
+	// from it by the face's ascent*scale (text.go's own doc) -- at scale
+	// 2, Tamzen7x13's ascent puts the glyph's top ~2px above y=0 when
+	// baseline=14, silently clipped off the real 0-origin screen buffer
+	// (confirmed by rendering into an unclipped canvas: the glyph spans
+	// y=[-2,11] at baseline=14). 18 clears it with a couple pixels of
+	// margin, still well inside topStripH's reserved 16px band before the
+	// first hack row starts at topStripH+14=30.
+	text.DrawScaled(img, 8, 18, 2, "PUSH HUB", hubInk)
 
 	list := getStatuses()
 	cur := getCursor()

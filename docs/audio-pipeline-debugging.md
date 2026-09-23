@@ -193,6 +193,39 @@ original directory *first*, then add the worktree for the other branch.
 assuming file corruption or a bad `git pull` — it's very likely just a
 different branch checked out in the same directory from unrelated work.
 
+## 8. "Hangs and drags on sounds" after turning a knob — SysEx pacing, not
+## a DSP/resampler bug
+
+Reported after `params.go`'s params were switched from plain 3-byte CC
+messages to `xenia_plugin.cpp`'s SysEx Single Parameter Change (10 bytes,
+see `docs/xenia-gearmulator-notes.md`'s "The real answer" section — most
+Xenia params need this, only 7 CCs are hardwired). `gearmulator`'s own
+`hardwareLib/sciMidi.cpp` (`SciMidi::process`) models a real MIDI cable's
+byte rate for outgoing SysEx: each queued message serializes for
+`msg.size() * m_samplerate * 0.1 / 500` samples before the next queued one
+can even start draining into the emulated UART — realistic, but it means a
+fast continuous knob turn or a dragged web-UI slider (both can fire many
+`set_param` calls per second) queues SysEx messages faster than the
+emulated device drains them, and the audible parameter change visibly lags
+behind the physical motion while the backlog empties. Plain-CC params
+(the 5 hardwired ones, and note/PC messages) aren't paced this way and
+never showed this symptom.
+
+**Fix**: `audiosession.go`'s debounce mechanism (previously only used for
+"program", 200ms, to avoid flooding the device's patch-load state
+machine) is now generic — every device-facing param commit goes through a
+30ms per-key coalescing timer (`scheduleParamCommit`/`paramDebounceDelay`)
+before it's actually written to the plugin. The on-screen/web value still
+updates immediately (unaffected — that's `applyEncoder`'s own
+`nudgeSlotLocked`, screen-only); only the SysEx write to the device is
+coalesced, so a fast flick sends one settled commit instead of a burst.
+**Not yet re-tested on real Push hardware as of this writing** — reasoned
+from `sciMidi.cpp`'s actual pacing constants, not from a live repro, since
+this environment has no ROM/hardware to reproduce the original symptom
+against. If "hangs and drags" persists after this, the debounce delay
+(30ms) may need to go up, or another cause entirely is in play — don't
+assume this was the only possible source without re-testing.
+
 ## General debugging directive for this project
 
 Given how many of the above turned out to be "looks completely correct

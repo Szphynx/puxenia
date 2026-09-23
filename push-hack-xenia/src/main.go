@@ -117,6 +117,14 @@ const (
 	ctlSetParam                    // key/val = absolute param write (see webserver.go) — not from Push hardware
 	ctlBankFlip                    // idx = target bank (0 or 1) — D-Pad Left/Right, see setBank in params.go
 	ctlMasterVolume                // delta = tick count — Push3's dedicated hardware Volume encoder
+	// ctlCommitParam is scheduleKeyedCommit's own terminal replay kind
+	// (audiosession.go, paramDebounceDelay) — key/val = the settled
+	// device-facing value a debounce timer decided to actually commit.
+	// Never sent by Push hardware or the web UI directly; ctlSetParam is
+	// their entry point, which schedules this instead of writing straight
+	// through, so the two kinds must stay distinct or a debounced commit
+	// would re-schedule itself forever instead of terminating.
+	ctlCommitParam
 )
 
 // controlEvent is a CC-derived UI action decoded on the ALSA read-loop

@@ -24,8 +24,10 @@ Build complete. Staged at: $DIST_DIR
   $DIST_DIR/push-hub    (binary)
   $DIST_DIR/hack.json
   $DIST_DIR/hacks.json  <- registered hacks; edit "api"/"service" per entry
-                           if a hack's port or init.d service name differs
-                           (see src/focus.go's doc on the "service" guess)
+                           if a hack's port or init.d service name differs,
+                           and "dir"/"exec"/"process"/"log" if its deploy.sh's
+                           own REMOTE_DIR/launch command/binary name differs
+                           (see src/focus.go's doc on setServiceRunning)
 
 Run locally with:
   cd $DIST_DIR && ./push-hub -config hack.json

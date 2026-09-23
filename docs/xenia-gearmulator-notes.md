@@ -363,3 +363,46 @@ rebuild-and-test round here.)
    original investigation is still open — check the manual for a
    per-single-patch MIDI-enable byte distinct from the global
    `ParameterReceive`.
+
+## Knobs not matching the loaded preset — edit-buffer readback
+
+Reported symptom: after loading a preset (Program Change), the on-screen/
+web knob positions kept showing whatever they were before, not the new
+patch's real values. Root cause was structural, independent of the
+CC-vs-SysEx question above: `inst->paramValues` (the thing
+`get_param("state")`/`params.go`'s `syncFromPluginState` reads) is a pure
+host-side shadow, only ever written by this host's own `set_param` calls
+— a Program Change replaces the device's *entire* current patch
+server-side, which this shadow had no way to observe.
+
+**Fix**: `xenia_plugin.cpp` now requests the device's current Edit Buffer
+back after every Program Change (`sendEditBufferRequest` — a Single
+Request SysEx, `F0 3E 0E DEV 00 20 00 F7`; `BANK=0x20` is
+`LocationH::SingleEditBufferSingleMode`, confirmed from
+`xtController.cpp`'s own `requestSingle(SingleEditBufferSingleMode, 0)`
+call sites, not guessed). The device's Single Dump response (265 bytes,
+`IDM 0x10`) is reassembled across calls from the emulator's own paced MIDI
+OUT (`drainDeviceMidiOut`, called every native block from
+`fillMoreOutput` — a real dump takes many calls' worth of device-time to
+arrive at the emulator's modeled baud rate, same pacing mechanism as
+section 8 in `docs/audio-pipeline-debugging.md`) and parsed
+(`parseSingleDump`) into `paramValues` using the same `kSysexParams`
+SDATA-index table already trusted for outgoing Single Parameter Change.
+`push-hack-xenia/src/audiosession.go`'s render loop now also calls
+`params.syncFromPluginState(plugin)` on its existing 2s poll tick (not a
+fixed delay after the Program Change commit — self-corrects regardless of
+how long the device actually takes to answer).
+
+**Verification status**: compiles clean and the frame-reassembly logic
+was traced by hand against a synthetic split-across-calls byte stream
+(confirms no infinite loop / off-by-one, not that the protocol bytes are
+right). **Not run against the real ROM or real hardware** — this
+environment has no Microwave XT ROM to instantiate `xt::Xt` against, only
+the Monomachine one from the unrelated puMMa work. The SDATA index table
+itself is the same one already trusted for `sendSingleParamChange`
+(ground-truth JSON, not guessed), and edit-buffer requests are a basic,
+foundational MIDI feature far more likely to just work than the still-open
+"does a Single Parameter Change even audibly change the sound" question
+above — but per this whole doc's own directive, don't upgrade that to
+"confirmed working" without actually testing it via `xenia_render` or on
+real Push hardware first.

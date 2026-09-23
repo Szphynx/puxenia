@@ -352,6 +352,13 @@ namespace
 		// Populated with each ParamDef's defaultV in xenia_create_instance.
 		std::map<std::string, uint8_t> paramValues;
 
+		// Raw bytes read back from the device's own MIDI OUT since the last
+		// complete SysEx frame was consumed -- see drainDeviceMidiOut. A
+		// Single Dump response can take many fillMoreOutput calls' worth of
+		// (paced, realistic-baud-rate) device-time to fully arrive, so this
+		// has to persist across calls rather than being a local variable.
+		std::vector<uint8_t> midiOutAccum;
+
 		std::vector<ActiveNote> activeNotes;
 
 		~XeniaInstance()
@@ -476,6 +483,114 @@ namespace
 		return nullptr;
 	}
 
+	// sendEditBufferRequest asks the device to dump its current Edit
+	// Buffer -- the patch actually driving the audio engine right now, as
+	// opposed to any specific bank/program slot -- via a Single Request
+	// SysEx (IDM 0x00), format F0 3E 0E DEV 00 BANK PROGRAM F7 (confirmed
+	// from the reference JUCE plugin's parameterDescriptions_xt.json
+	// "requestsingle" packet template, same source that fixed
+	// sendSingleParamChange's field layout -- see docs/xenia-gearmulator-
+	// notes.md). BANK=0x20 is LocationH::SingleEditBufferSingleMode
+	// (xtMidiTypes.h) -- confirmed as the real edit-buffer request from
+	// xtController.cpp's own requestSingle(SingleEditBufferSingleMode, 0)
+	// call sites, not guessed. The device answers with a Single Dump
+	// (IDM 0x10, 265 bytes) on its own MIDI OUT, picked up by
+	// drainDeviceMidiOut/parseSingleDump.
+	void sendEditBufferRequest(XeniaInstance *inst)
+	{
+		synthLib::SMidiEvent ev(synthLib::MidiEventSource::Host);
+		auto &sx = ev.sysex;
+		sx.push_back(0xF0);
+		sx.push_back(0x3E);
+		sx.push_back(0x0E);
+		sx.push_back(0x7F); // DEV: broadcast
+		sx.push_back(0x00); // IDM: Single Request
+		sx.push_back(0x20); // BANK: Edit Buffer, Single mode
+		sx.push_back(0x00); // PROGRAM/location: unused for the edit buffer
+		sx.push_back(0xF7);
+		inst->device->sendMidiEvent(ev);
+	}
+
+	// parseSingleDump copies every kSysexParams-covered param's real value
+	// out of a complete Single Dump SysEx frame (header F0 3E 0E DEV 10,
+	// bank+program at offsets 5-6, then 256 raw SDATA bytes starting at
+	// offset 7, then a checksum byte and the closing F7 -- Dumps[Single] in
+	// gearmulator's own xtState.h: firstParamIndex=IdxSingleParamFirst=7,
+	// dumpSize=265) into inst->paramValues, so get_param("state") (and thus
+	// params.go's syncFromPluginState) reports what the device actually
+	// just loaded instead of whatever this host last wrote. NOT the 5
+	// hardwired-CC params (mod_wheel/channel_volume/panning/sustain/
+	// glide_time, see kSysexParams' own doc) -- those aren't in the SDATA
+	// table this dump exposes and keep whatever this host last set.
+	void parseSingleDump(XeniaInstance *inst, const std::vector<uint8_t> &frame)
+	{
+		constexpr size_t kHeaderBytes = 7; // F0 3E 0E DEV IDM BANK PROGRAM
+		constexpr size_t kFooterBytes = 2; // checksum, F7
+		if(frame.size() < kHeaderBytes + kFooterBytes)
+			return;
+		const size_t paramBytes = frame.size() - kHeaderBytes - kFooterBytes;
+		for(const auto &sp : kSysexParams)
+		{
+			if(sp.sdataIndex >= paramBytes)
+				continue;
+			inst->paramValues[sp.key] = frame[kHeaderBytes + sp.sdataIndex];
+		}
+	}
+
+	// drainDeviceMidiOut pulls whatever new bytes the device has put on its
+	// own MIDI OUT since the last call (Xt::receiveMidi swaps out and
+	// clears the emulator's internal accumulation buffer -- see xt.cpp),
+	// reassembles complete SysEx frames across calls (a real dump is paced
+	// at the emulator's modeled baud rate -- see hardwareLib/sciMidi.cpp --
+	// so it can take many native blocks' worth of device-time to fully
+	// arrive, never all in one call), and hands each complete frame to
+	// parseSingleDump if it's a Single Dump. Any non-SysEx bytes (this
+	// device doesn't send unsolicited note/CC echo back, but be
+	// defensive) are just discarded -- this plugin has no use for them.
+	// Called every native block from fillMoreOutput, same cadence as
+	// process() itself, so this never lets the emulator's own buffer grow
+	// unbounded even when no dump was ever requested (the common case:
+	// receiveMidi returns empty, the whole function is a couple of cheap
+	// no-op checks).
+	void drainDeviceMidiOut(XeniaInstance *inst)
+	{
+		std::vector<uint8_t> fresh;
+		inst->device->receiveMidi(fresh);
+		if(fresh.empty())
+			return;
+		inst->midiOutAccum.insert(inst->midiOutAccum.end(), fresh.begin(), fresh.end());
+
+		size_t i = 0;
+		while(i < inst->midiOutAccum.size())
+		{
+			if(inst->midiOutAccum[i] != 0xF0)
+			{
+				++i;
+				continue;
+			}
+			size_t end = i + 1;
+			while(end < inst->midiOutAccum.size() && inst->midiOutAccum[end] != 0xF7)
+				++end;
+			if(end >= inst->midiOutAccum.size())
+			{
+				// Frame not fully arrived yet -- drop any junk bytes before
+				// it and wait for more on a later call.
+				inst->midiOutAccum.erase(inst->midiOutAccum.begin(), inst->midiOutAccum.begin() + static_cast<long>(i));
+				return;
+			}
+			// [i, end] inclusive of the closing F7 is one complete frame.
+			if(end - i + 1 > 4 && inst->midiOutAccum[i + 1] == 0x3E &&
+				inst->midiOutAccum[i + 2] == 0x0E && inst->midiOutAccum[i + 4] == 0x10)
+			{
+				std::vector<uint8_t> frame(inst->midiOutAccum.begin() + static_cast<long>(i),
+					inst->midiOutAccum.begin() + static_cast<long>(end) + 1);
+				parseSingleDump(inst, frame);
+			}
+			i = end + 1;
+		}
+		inst->midiOutAccum.clear();
+	}
+
 	void trackNoteOn(XeniaInstance *inst, uint8_t note)
 	{
 		for(auto &n : inst->activeNotes)
@@ -523,6 +638,7 @@ namespace
 	void fillMoreOutput(XeniaInstance *inst)
 	{
 		inst->device->process(kNativeBlock);
+		drainDeviceMidiOut(inst);
 		auto &outs = inst->device->getAudioOutputs();
 
 		inst->nativeL.resize(kNativeBlock);
@@ -791,6 +907,14 @@ namespace
 			else if(def->outCC == kProgramSentinel)
 			{
 				sendToDevice(inst, static_cast<uint8_t>(0xC0 | kWorkingChannel0Indexed), v, 0);
+				// A Program Change silently replaces the device's entire
+				// current patch -- request the edit buffer back so
+				// paramValues (and thus this host's on-screen/web knob
+				// positions, once params.go's syncFromPluginState re-reads
+				// "state") reflect what the new patch actually set instead
+				// of whatever the previous one left behind. See
+				// drainDeviceMidiOut/parseSingleDump for the response side.
+				sendEditBufferRequest(inst);
 			}
 			else if(def->outCC != 0)
 			{
