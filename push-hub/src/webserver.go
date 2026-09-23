@@ -5,9 +5,12 @@ package main
 // down its local Shift+Device (docs/push-hub-proposal.md's contract item
 // 4); /api/hub/state is a read-only dump of the same data the on-screen
 // menu shows, mainly useful for checking the hub's state without needing
-// to be looking at Push's actual screen. No embedded browser UI -- see
-// the proposal doc's "generalizes cleanly" section; the Push hardware
-// screen is the picker, this is just a diagnostic window into it.
+// to be looking at Push's actual screen; /api/splash/clear is what each
+// hack's own deploy.sh calls after a redeploy, so a stuck loading splash
+// (splash.go's own doc) doesn't have to wait on either the alive-poll or
+// splashTimeout to clear. No embedded browser UI -- see the proposal
+// doc's "generalizes cleanly" section; the Push hardware screen is the
+// picker, this is just a diagnostic window into it.
 
 import (
 	"context"
@@ -31,12 +34,21 @@ func handleHubState(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleSplashClear — see splash.go's clearSplash doc. ?id=<hackID> is
+// optional; omitted, it clears whatever splash is showing regardless of
+// which hack it's for.
+func handleSplashClear(w http.ResponseWriter, r *http.Request) {
+	clearSplash(r.URL.Query().Get("id"))
+	w.WriteHeader(http.StatusOK)
+}
+
 // runWebServer blocks until shutdown fires -- main.go's one blocking call,
 // same role watchHWParams plays in every DSP hack's own main().
 func runWebServer(port int, shutdown <-chan struct{}) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/ping", handlePing)
 	mux.HandleFunc("GET /api/hub/state", handleHubState)
+	mux.HandleFunc("POST /api/splash/clear", handleSplashClear)
 
 	srv := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: mux}
 

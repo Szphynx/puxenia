@@ -107,6 +107,16 @@ ssh_ "[ -e /lib64 ] || ln -s /lib /lib64"
 source "$(dirname "${BASH_SOURCE[0]}")/ensure-audio-loopback.sh"
 ensure_audio_loopback
 
+echo "==> Clearing any stuck push-hub loading splash for xenia (best-effort)"
+# push-hub isn't touched by this redeploy at all (plain scp + pkill +
+# relaunch, never through push-hub's own START/STOP), so a stuck splash
+# from before this redeploy would otherwise sit there until push-hub's
+# own alive-poll or splashTimeout catches up (push-hub/src/splash.go's
+# doc) -- this is immediate instead. Best-effort: push-hub may not be
+# installed/running at all (a solo Xenia-only checkout), so a failure
+# here must never fail the deploy.
+ssh_ "curl -fsS -m 2 -X POST 'http://localhost:7709/api/splash/clear?id=xenia' >/dev/null 2>&1 || true" || true
+
 if [[ "${BACKGROUND:-}" == "1" ]]; then
     echo "==> Launching push-xenia detached (BACKGROUND=1)"
     ssh_ "cd $REMOTE_DIR && chmod +x push-xenia && nohup ./push-xenia > push-xenia.log 2>&1 &"

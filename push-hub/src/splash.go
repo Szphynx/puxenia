@@ -86,6 +86,29 @@ type splashFrame struct {
 	fadeT   float64 // 0 (just went alive, still full splash) .. 1 (fully faded, show menu) -- only meaningful when !pulsing
 }
 
+// clearSplash forcibly ends whatever splash is currently tracked — see
+// webserver.go's POST /api/splash/clear, which each hack's own deploy.sh
+// now calls (best-effort, ignoring the request entirely if push-hub isn't
+// reachable) right after redeploying. An out-of-band redeploy (scp +
+// pkill + relaunch, this project's own normal workflow) never goes
+// through push-hub's own START/STOP at all, so it's otherwise invisible
+// to push-hub except through the same alive-polling that normally
+// self-heals a stuck splash on its own (see splashTimeout's doc for when
+// it doesn't) — reported stuck again on real hardware even after that
+// timeout landed, so this gives a redeploy an explicit, immediate way to
+// drop whatever this was tracking instead of waiting on either of those.
+// If id is nonempty, only clears when it matches the splash currently
+// being tracked, so one hack's redeploy can't stomp a DIFFERENT hack's
+// own, still-legitimately-loading splash.
+func clearSplash(id string) {
+	splashMu.Lock()
+	defer splashMu.Unlock()
+	if id != "" && splashID != id {
+		return
+	}
+	splashLetter = ""
+}
+
 // currentSplashFrame resolves the splash state machine against the
 // latest polled hack statuses (registry.go's pollRegistry) — called once
 // per hub display tick (runHubDisplayLoop), same cadence as renderMenu.

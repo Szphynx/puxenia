@@ -48,10 +48,18 @@ process still holding the port — previously left the splash waiting on
 an "alive" that was never coming, forever, with no indication anything
 was wrong). `splash.go` now gives up after `splashTimeout` (30s, generous
 margin over even `push-hack-mm`'s own ~22s ROM boot) and falls through to
-the normal menu, whose dead/grey row already shows the real state. Not
-yet hardware-confirmed which failure mode was actually happening — this
-bounds the symptom regardless of the exact cause, but if it recurs
-worth checking that hack's own log for what actually went wrong.
+the normal menu, whose dead/grey row already shows the real state.
+
+**Update 2**: still reported stuck after that fix — a normal redeploy
+(scp + pkill + relaunch, this project's own everyday workflow) never
+goes through push-hub's own START/STOP at all, so it's invisible to
+push-hub except through the alive-poll/timeout above, and the user's own
+redeploy loop is faster than either. push-hub now exposes
+`POST /api/splash/clear?id=<hackID>`, and both `deploy.sh` (xenia) and
+`push-hack-mm/deploy.sh` call it (best-effort — push-hub may not be
+running) right after relaunching, so a redeploy always drops whatever
+stuck splash state push-hub had for that hack immediately. Not
+hardware-confirmed yet.
 
 ## push-hub: process control
 
