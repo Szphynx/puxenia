@@ -11,6 +11,7 @@ package main
 import (
 	"image"
 	"image/color"
+	"log"
 	"math"
 	"sync"
 	"time"
@@ -28,6 +29,23 @@ const splashFadeDuration = 2 * time.Second
 // loading.
 const splashPulsePeriod = 1200 * time.Millisecond
 
+// splashTimeout bounds how long the pulse waits for the target to report
+// Alive before giving up -- reported on real hardware as "the pulsing X
+// loading screen stuck sometimes." A hack's web server (and therefore
+// registry.go's Alive, which is a plain HTTP 200 from /api/state — see
+// its own doc, NOT "fully booted") normally comes up within a second or
+// two of the process starting, well before push-hack-mm's own ~22s ROM
+// boot even finishes, so this is generous margin for a slow start, not a
+// tight budget — its job is only to guarantee the splash can never pulse
+// forever when a start/restart actually fails (crash loop, wrong exec
+// path, a leftover process still holding the port) with zero on-screen
+// indication anything went wrong. Once it elapses, currentSplashFrame
+// gives up and falls through to the normal menu, whose own dead/grey row
+// for that hack (registry.go's Alive already reflects the real state
+// accurately) is the failure indication — not a second bespoke "failed"
+// screen for what the menu already shows correctly.
+const splashTimeout = 30 * time.Second
+
 // splashScale is DrawScaled's scale factor for the splash letter --
 // empirically sized (see the baseline/centering comment on
 // renderSplashFrame) to read clearly from across a room without any part
@@ -35,10 +53,11 @@ const splashPulsePeriod = 1200 * time.Millisecond
 const splashScale = 8
 
 var (
-	splashMu     sync.Mutex
-	splashLetter string    // "" — no splash active
-	splashID     string    // hackEntry.ID being waited on, matched against getStatuses()
-	splashReady  time.Time // zero until the target first reports Alive; then the fade clock starts
+	splashMu      sync.Mutex
+	splashLetter  string    // "" — no splash active
+	splashID      string    // hackEntry.ID being waited on, matched against getStatuses()
+	splashReady   time.Time // zero until the target first reports Alive; then the fade clock starts
+	splashStarted time.Time // when triggerSplash fired -- see splashTimeout's doc
 )
 
 // triggerSplash starts (or restarts) the loading splash for hack id,
@@ -55,6 +74,7 @@ func triggerSplash(id, letter string) {
 	splashLetter = letter
 	splashID = id
 	splashReady = time.Time{}
+	splashStarted = time.Now()
 }
 
 // splashFrame is one render tick's resolved splash state: whether to draw
@@ -86,6 +106,13 @@ func currentSplashFrame() splashFrame {
 
 	if !alive {
 		splashReady = time.Time{}
+		if time.Since(splashStarted) >= splashTimeout {
+			// Give up -- see splashTimeout's doc. Clear so future ticks
+			// skip straight to the menu, same as a completed fade.
+			log.Printf("push-hub: %s did not report alive within %v, giving up on its loading splash", splashID, splashTimeout)
+			splashLetter = ""
+			return splashFrame{}
+		}
 		return splashFrame{active: true, letter: splashLetter, pulsing: true}
 	}
 
