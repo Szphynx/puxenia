@@ -272,6 +272,34 @@ func (s *audioSession) run(plugin *C.bridge_plugin_t, midiCh <-chan [3]byte, ctl
 					seq.ToggleMute(ev.idx)
 					params.MarkDirty()
 
+				case ctlLiveNote:
+					// Shift+pad live audition on the SEQ page (main.go's
+					// Fixed() doc). Unlike ctlToggleStep, on_midi has no
+					// side-effecting track-select of its own — it always
+					// targets whatever inst->currentTrack already is — so
+					// this must explicitly switch track itself before
+					// sending the note, and only on "on": switching again
+					// on "off" could retarget the currently-viewed track
+					// off the back of a stray/mismatched release (see
+					// main.go's doc on why Note Off is accepted
+					// unconditionally here, not gated on Shift).
+					if ev.key == "on" {
+						if params.CurrentTrack() != ev.idx {
+							cSetParam(plugin, "track", strconv.Itoa(ev.idx))
+							params.SetParam("track", float64(ev.idx))
+							params.syncFromPluginState(plugin)
+						}
+						params.MarkDirty()
+					}
+					status := byte(0x80)
+					velocity := byte(0)
+					if ev.key == "on" {
+						status = 0x90
+						velocity = byte(ev.val)
+					}
+					msg := [3]byte{status, byte(ev.delta), velocity}
+					C.bridge_plugin_on_midi(plugin, (*C.uint8_t)(unsafe.Pointer(&msg[0])), 3)
+
 				case ctlBottomPress:
 					switch params.Page() {
 					case pageSeq:
