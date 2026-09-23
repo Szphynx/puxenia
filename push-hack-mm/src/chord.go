@@ -2,7 +2,8 @@ package main
 
 // chord.go — Shift+Device (CC49+CC110, docs/push3-button-map.md) chord
 // detection that toggles the on-screen param UI. Pattern mirrors
-// hacks/keyboard-visualizer/src/chord.go's Shift+Note detector (itself
+// push-hack-xenia/src/chord.go, itself modeled on
+// hacks/keyboard-visualizer/src/chord.go's Shift+Note detector (in turn
 // modeled on push-manager's chordCCPressed/chordCCReleased) — same 500ms
 // debounce, same held-set-of-two-CCs shape.
 
@@ -49,7 +50,7 @@ func probeHub(hubURL string) bool {
 // held together (debounced 500ms), toggles the on-screen param UI. Inert
 // whenever push-hub is present — hub owns this chord exclusively then,
 // and drives this hack's UI via POST /api/focus instead (webserver.go).
-func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter, diag *diagStats) {
+func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus *audioStatus, seq *seqState, level *levelMeter) {
 	if hubPresent {
 		return
 	}
@@ -72,14 +73,15 @@ func onChordCC(cc, val byte, pmURL string, st *paramState, io *ioState, astatus 
 	chordMu.Unlock()
 
 	if fire {
-		go toggleUI(pmURL, st, io, astatus, level, diag)
+		go toggleUI(pmURL, st, io, astatus, seq, level)
 	}
 }
 
 // isShiftHeld reports whether Shift is currently held — used by the
 // touch-strip pitch-bend handler to switch it to driving mod_wheel
-// instead. Safe to call from the ALSA read-loop goroutine (same one that
-// updates chordHeld).
+// instead, and by main.go's pad handler to distinguish a plain pad tap
+// from a Shift+pad "mute this track" gesture. Safe to call from the ALSA
+// read-loop goroutine (same one that updates chordHeld).
 func isShiftHeld() bool {
 	chordMu.Lock()
 	defer chordMu.Unlock()

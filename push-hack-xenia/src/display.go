@@ -106,7 +106,26 @@ var (
 	uiMu     sync.Mutex
 	uiOn     bool
 	lastPage = -1 // last page LEDs were synced for, see runDisplayLoop
+
+	// focused gates every Push3-sourced control/pad event in main.go's
+	// Fixed() — see docs/push-hub-proposal.md. Defaults true so a hack
+	// run without push-hub installed is unaffected; push-hub's
+	// POST /api/focus (webserver.go's handleFocus) is the only thing
+	// that ever sets it false.
+	focused = true
 )
+
+func isFocused() bool {
+	uiMu.Lock()
+	defer uiMu.Unlock()
+	return focused
+}
+
+func setFocused(v bool) {
+	uiMu.Lock()
+	focused = v
+	uiMu.Unlock()
+}
 
 // renderTopTabs draws the 4 page names across the top of the screen, in
 // the same column positions as the physical top-screen buttons that jump
@@ -409,15 +428,25 @@ func renderWaitingScreen(msg string) *image.NRGBA {
 	return img
 }
 
-// toggleUI flips the on-screen param UI: entering takeover mode, enabling
-// push-manager's MIDI intercept (so pad hits stop reaching Live while this
-// UI reads them as controls, not notes), syncing LEDs for the current
-// page, and forcing an immediate frame — or releasing all three back to
-// the native Push UI / normal Live routing.
+// toggleUI flips the on-screen param UI — local Shift+Device's own path
+// (chord.go). setUI does the actual work; both this and push-hub's
+// POST /api/focus (webserver.go's handleFocus) call it directly rather
+// than duplicating the takeover logic.
 func toggleUI(pmURL string, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter, diag *diagStats) {
 	uiMu.Lock()
-	uiOn = !uiOn
-	on := uiOn
+	next := !uiOn
+	uiMu.Unlock()
+	setUI(pmURL, next, st, io, astatus, level, diag)
+}
+
+// setUI enters takeover mode (push-manager's display + MIDI intercept,
+// current page's LEDs, an immediate frame) or releases all three back to
+// the native Push UI / normal Live routing — an absolute set, not a
+// toggle, so two independent callers (local Shift+Device and push-hub's
+// HTTP-driven focus) never fight over one boolean's parity.
+func setUI(pmURL string, on bool, st *paramState, io *ioState, astatus *audioStatus, level *levelMeter, diag *diagStats) {
+	uiMu.Lock()
+	uiOn = on
 	uiMu.Unlock()
 
 	client := pmclient.New(pmURL)

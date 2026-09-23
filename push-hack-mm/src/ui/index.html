@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>puMMa</title>
+<style>
+  /*
+   * Monochrome dot-matrix look, matched against E's own puMMa reference
+   * screenshot (a Monomodule-style editor: white paper, black ink,
+   * dashed cell grid, blocky pixel-ish caps, solid-black = selected).
+   * Sequencer trig colors (green/red/amber) stay — those read hardware
+   * state (which trig type a step is), not decoration — everything else
+   * is pure black-on-white.
+   */
+  :root {
+    --paper: #ffffff;
+    --ink:   #000000;
+    --dim:   #6a6a6a;
+    --line:  #000000;
+    --green: #1a9c40; /* mmGreen, darkened for contrast on white */
+    --red:   #c81e1e; /* mmRed, darkened for contrast on white */
+    --amber: #b87800; /* mmAmber, darkened for contrast on white */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 13px/1.4 ui-monospace, "SF Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+    font-weight: 700;
+  }
+  header {
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    border-bottom: 3px solid var(--ink);
+  }
+  header h1 {
+    font-size: 17px;
+    margin: 0;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  #status {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 8px;
+    border: 1px solid var(--ink);
+  }
+  #status.ready, #status.notready { background: var(--paper); color: var(--ink); }
+  #diag { font-size: 11px; color: var(--dim); }
+
+  #track-picker { display: flex; gap: 4px; margin-left: auto; }
+  .track-btn {
+    appearance: none; border: 1px solid var(--ink); border-radius: 0;
+    width: 28px; height: 28px; font-weight: 700; font-size: 12px;
+    background: var(--paper); color: var(--ink); cursor: pointer;
+  }
+  .track-btn.active { background: var(--ink); color: var(--paper); }
+
+  main { max-width: 900px; margin: 0 auto; padding: 0 0 40px; }
+
+  #tabs { display: flex; flex-wrap: wrap; gap: 0; padding: 10px 14px 0; }
+  .tab {
+    appearance: none; border: 1px solid var(--ink); border-right: none; padding: 7px 12px; font: inherit;
+    font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase; background: var(--paper); color: var(--ink);
+    cursor: pointer;
+  }
+  .tab:last-of-type { border-right: 1px solid var(--ink); }
+  .tab.active { background: var(--ink); color: var(--paper); }
+
+  .page { display: none; margin: 0 14px; }
+  .page.active {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    border: 1px solid var(--ink);
+  }
+
+  .row {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 10px 4px;
+    border-right: 1px dashed var(--ink);
+    border-top: 1px dashed var(--ink);
+  }
+  .row label {
+    font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; max-width: 100%;
+  }
+  .row .val { font-size: 12px; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--ink); }
+  .row.accent-filter .val, .row.accent-filter label { color: var(--green); }
+  .row.accent-lfo .val, .row.accent-lfo label { color: var(--amber); }
+
+  /* Perilla (knob) — the default control for a per-track param (all of
+     them "int" here; mm_plugin.cpp never emits "float"). A native
+     <input type=range> maps value to horizontal thumb position, which
+     doesn't match a rotary encoder's vertical-drag convention, so this is
+     a plain div driven by pointer events (see buildKnob) instead.
+     Drawn as a 300deg arc gauge (track + value-fraction fill, value
+     printed inside), not a pointer-line dial — this is the exact shape
+     core/gfx/widgets.DrawKnobArc already draws on the unit's own Push
+     screen (see display.go's DrawKnobArc call), so the web control
+     matches the hardware control it's standing in for. */
+  .row.knob-row { flex-direction: column; }
+  .row.knob-row .knob { order: 1; }
+  .row.knob-row label { order: 2; }
+  .row.knob-row .val { display: none; }
+  .knob {
+    --knob-sweep: 0deg; /* set by buildKnob: value fraction * 300deg */
+    position: relative;
+    width: 34px; height: 34px; margin: 2px 0;
+    cursor: ns-resize;
+    touch-action: none;
+    outline: none;
+  }
+  .knob:focus-visible { box-shadow: 0 0 0 2px var(--ink); border-radius: 50%; }
+  .knob-track, .knob-fill {
+    position: absolute; inset: 0; border-radius: 50%;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  }
+  .knob-track {
+    background: conic-gradient(from 210deg, #ccc 0deg 300deg, transparent 300deg 360deg);
+  }
+  .knob-fill {
+    background: conic-gradient(from 210deg, var(--ink) 0deg var(--knob-sweep), transparent var(--knob-sweep) 360deg);
+  }
+  .knob-value {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px;
+    pointer-events: none;
+  }
+  .row.accent-filter .knob-fill { background: conic-gradient(from 210deg, var(--green) 0deg var(--knob-sweep), transparent var(--knob-sweep) 360deg); }
+  .row.accent-lfo .knob-fill { background: conic-gradient(from 210deg, var(--amber) 0deg var(--knob-sweep), transparent var(--knob-sweep) 360deg); }
+
+  /* Deslizador (fader) — the "level" mixer param, styled as a channel-
+     strip meter fader (vertical, like the reference sheet's LEV strip)
+     rather than another knob. Same <input type=range> the grid already
+     lays out, just oriented vertically. */
+  input.fader[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 20px;
+    height: 96px;
+    margin: 2px 0;
+    background: transparent;
+  }
+  input.fader[type=range]::-webkit-slider-runnable-track,
+  input.fader[type=range]::-moz-range-track {
+    width: 6px;
+    background: var(--paper);
+    border: 1px dashed var(--ink);
+  }
+  input.fader[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px; height: 12px;
+    background: var(--ink);
+  }
+  input.fader[type=range]::-moz-range-thumb {
+    width: 18px; height: 12px; border: none;
+    background: var(--ink);
+  }
+
+  /* Indicador (LED) — small lamp, reusable wherever a control needs an
+     on/off/attention cue beyond text alone: the header's audio status,
+     and the MUTE toggle below. Monochrome: unlit = outline, lit = solid
+     black, matching the reference sheet's selected/STAT cell language
+     rather than a colored glow. */
+  .led {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border: 1px solid var(--ink);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .led-on { background: var(--ink); }
+
+  .mute-toggle {
+    appearance: none; border: 1px solid var(--ink);
+    background: var(--paper); color: var(--ink);
+    font: inherit;
+    font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase;
+    padding: 6px 8px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 2px;
+  }
+  .mute-toggle.active { background: var(--ink); color: var(--paper); }
+  .mute-toggle.active .led { border-color: var(--paper); }
+  .mute-toggle.active .led.led-on { background: var(--paper); }
+
+  /* -- SEQ page ------------------------------------------------------- */
+  #seq-page { padding: 16px; display: none; }
+  #seq-page.active { display: block; }
+  #seq-transport { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+  .xport-btn {
+    appearance: none; border: 1px solid var(--ink); padding: 8px 14px;
+    font-weight: 700; font-size: 12px; text-transform: uppercase;
+    background: var(--paper); color: var(--ink); cursor: pointer;
+  }
+  .xport-btn.on.play { background: var(--green); color: var(--paper); border-color: var(--green); }
+  .xport-btn.on.record { background: var(--red); color: var(--paper); border-color: var(--red); }
+  #seq-page-toggle { margin-left: auto; }
+
+  .seq-grid { display: flex; flex-direction: column; gap: 3px; }
+  .seq-row { display: grid; grid-template-columns: 44px repeat(8, 1fr) 34px; gap: 3px; align-items: center; }
+  .seq-row .track-label { font-size: 11px; font-weight: 700; color: var(--dim); }
+  .seq-row.current .track-label { color: var(--ink); }
+  .seq-step {
+    appearance: none; border: 1px solid var(--ink); height: 32px;
+    background: var(--paper); cursor: pointer;
+  }
+  .seq-step.on { background: var(--green); border-color: var(--green); }
+  .seq-step.on.red { background: var(--red); border-color: var(--red); }
+  .seq-step.on.yellow { background: var(--amber); border-color: var(--amber); }
+  .mute-btn {
+    appearance: none; border: 1px solid var(--ink); height: 26px;
+    background: var(--paper); color: var(--ink); font-size: 10px; font-weight: 700; cursor: pointer;
+  }
+  .mute-btn.on { background: var(--ink); color: var(--paper); }
+
+  #lcd-wrap { margin-top: 16px; text-align: center; }
+  #lcd {
+    background: #0a1a0e; image-rendering: pixelated;
+    width: 384px; height: 192px; border: 1px solid var(--ink);
+  }
+  #lcd-caption { font-size: 10px; color: var(--dim); margin-top: 4px; }
+
+  /* -- I/O / SETTINGS -------------------------------------------------- */
+  #io {
+    background: var(--paper); color: var(--ink); margin: 16px 14px 0;
+    border: 1px solid var(--ink); padding: 14px 16px;
+  }
+  #io h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 10px; }
+  .io-row { display: grid; grid-template-columns: 110px 1fr; gap: 10px; align-items: center; padding: 6px 0; }
+  .io-row label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  select.io {
+    width: 100%; background: var(--paper); color: var(--ink); border: 1px solid var(--ink);
+    padding: 6px 8px; font-weight: 700; font-size: 12px; font-family: inherit;
+  }
+  select.io:focus { outline: 2px solid var(--ink); }
+  #lcdfx-intensity:disabled { opacity: 0.35; }
+
+  /* LCD screen FX — a low-pixel/scanline overlay over the whole page, so
+     the browser UI reads a bit more like the unit's own dot-matrix
+     screen. Purely a fixed, pointer-events:none layer above everything
+     (z-index 999) so it never interferes with any control underneath;
+     its own on/off + intensity controls live only on the SETTINGS page
+     (see #lcdfx-toggle/#lcdfx-intensity above) — nothing elsewhere reads
+     or writes lcd-fx state. */
+  #lcd-fx {
+    position: fixed; inset: 0; z-index: 999; pointer-events: none;
+    opacity: var(--lcd-fx-opacity, 0);
+    mix-blend-mode: multiply;
+    background:
+      repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.4) 0px, rgba(0, 0, 0, 0.4) 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(to right, rgba(0, 0, 0, 0.15) 0px, rgba(0, 0, 0, 0.15) 1px, transparent 1px, transparent 3px),
+      radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.3) 100%);
+  }
+  #version { position: fixed; right: 6px; bottom: 4px; font-size: 10px; color: var(--dim); pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>puMMa</h1>
+  <span id="status"><span class="led" id="status-led"></span><span id="status-text">connecting…</span></span>
+  <span id="diag" title="CPU% of one core, active voice count">—</span>
+  <div id="track-picker"></div>
+</header>
+<main>
+  <nav id="tabs"></nav>
+  <div id="pages"></div>
+
+  <div id="seq-page">
+    <div id="seq-transport">
+      <button class="xport-btn play" id="btn-play">Play</button>
+      <button class="xport-btn" id="btn-stop">Stop</button>
+      <button class="xport-btn record" id="btn-record">Rec</button>
+      <button class="xport-btn" id="seq-page-toggle">Steps 1-8</button>
+      <label style="margin-left:auto; font-size:11px; color:var(--dim); display:flex; align-items:center; gap:4px;">
+        BASE CH
+        <select class="io" id="seq-base-channel"></select>
+      </label>
+    </div>
+    <div class="seq-grid" id="seq-grid"></div>
+    <div class="seq-row" style="grid-template-columns: 44px repeat(8,1fr) 34px; margin-top:6px;">
+      <span class="track-label">MUTE</span>
+      <div id="mute-row" style="display:contents"></div>
+      <span></span>
+    </div>
+    <div id="lcd-wrap">
+      <canvas id="lcd" width="128" height="64"></canvas>
+      <div id="lcd-caption">Emulated Monomachine LCD (selected track)</div>
+    </div>
+  </div>
+
+  <section id="io">
+    <h2>Settings</h2>
+    <div class="io-row"><label>MIDI IN</label><select class="io" id="io-midi"></select></div>
+    <div class="io-row"><label>Audio Out</label><select class="io" id="io-pcm"></select></div>
+    <div class="io-row"><label>Channel</label><select class="io" id="io-channel"></select></div>
+    <div class="io-row"><label>MIDI Channel</label><select class="io" id="io-recv-channel"></select></div>
+    <div class="io-row">
+      <label>LCD Screen FX</label>
+      <button class="mute-toggle" id="lcdfx-toggle" type="button"><span class="led"></span><span id="lcdfx-toggle-text">Off</span></button>
+    </div>
+    <div class="io-row">
+      <label>FX Intensity</label>
+      <input type="range" id="lcdfx-intensity" min="0" max="100" step="1">
+    </div>
+  </section>
+</main>
+<div id="lcd-fx" aria-hidden="true"></div>
+<span id="version"></span>
+<script>
+"use strict";
+
+// -- param pages (mirrors params.go's webParamPages) --------------------
+let metas = {};
+let pages = [];
+let activeTab = 0; // 0..pages.length-1 = param pages, pages.length = SEQ
+const touching = new Set();
+
+function accentClass(key) {
+  if (key.startsWith("filter_")) return "accent-filter";
+  if (key.startsWith("fx_") || key.startsWith("lfo")) return "accent-lfo";
+  return "";
+}
+
+// buildKnob renders a per-track param as a rotary encoder: drag
+// vertically (or scroll, or use arrow keys once focused) to turn it. A
+// native <input type=range> maps value to horizontal thumb position,
+// which doesn't match a knob's vertical-drag convention, so this drives
+// meta.key's value straight from pointer/wheel/keyboard events instead —
+// applyParamValue and buildParamRow only ever touch `.control`'s
+// `.value`, so the rest of the page doesn't need to know this control
+// isn't a real <input>.
+function buildKnob(meta, row) {
+  const el = document.createElement("div");
+  el.className = "knob";
+  el.tabIndex = 0;
+  el.setAttribute("role", "slider");
+  el.setAttribute("aria-valuemin", meta.min);
+  el.setAttribute("aria-valuemax", meta.max);
+  el.innerHTML = '<div class="knob-track"></div><div class="knob-fill"></div><div class="knob-value"></div>';
+  const valueEl = el.querySelector(".knob-value");
+
+  const step = Math.max(1, (meta.max - meta.min) / 200);
+  let value = meta.min;
+
+  Object.defineProperty(el, "value", {
+    get: () => value,
+    set(v) {
+      value = Number(v);
+      const frac = meta.max > meta.min ? (value - meta.min) / (meta.max - meta.min) : 0;
+      el.style.setProperty("--knob-sweep", (Math.max(0, Math.min(1, frac)) * 300) + "deg");
+      valueEl.textContent = Math.round(value);
+      el.setAttribute("aria-valuenow", value);
+    },
+  });
+  el.value = meta.min;
+
+  function commit(v) {
+    v = Math.round(Math.min(meta.max, Math.max(meta.min, v)));
+    el.value = v;
+    setParam(meta.key, el.value);
+    row.querySelector(".val").textContent = el.value;
+  }
+
+  let dragStartY = 0;
+  let dragStartValue = 0;
+  el.addEventListener("pointerdown", (e) => {
+    touching.add(meta.key);
+    dragStartY = e.clientY;
+    dragStartValue = value;
+    el.setPointerCapture(e.pointerId);
+    el.focus();
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!el.hasPointerCapture(e.pointerId)) return;
+    // 150px of vertical travel sweeps the full range — a comfortable
+    // one-hand throw, matching typical web-knob sensitivity.
+    const deltaPx = dragStartY - e.clientY;
+    commit(dragStartValue + (deltaPx / 150) * (meta.max - meta.min));
+  });
+  el.addEventListener("pointerup", (e) => {
+    touching.delete(meta.key);
+    el.releasePointerCapture(e.pointerId);
+  });
+  el.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    commit(value + (e.deltaY < 0 ? step : -step));
+  }, { passive: false });
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") { commit(value + step); e.preventDefault(); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowLeft") { commit(value - step); e.preventDefault(); }
+  });
+  el.addEventListener("focus", () => touching.add(meta.key));
+  el.addEventListener("blur", () => touching.delete(meta.key));
+
+  return el;
+}
+
+// buildMuteToggle renders "mute" as an LED lamp button (lit red when
+// muted) instead of a two-option dropdown — the same Off/Mute switch,
+// styled like the hardware's own mute lamp rather than a generic <select>.
+function buildMuteToggle(meta, row) {
+  const el = document.createElement("button");
+  el.type = "button";
+  el.className = "mute-toggle";
+  el.innerHTML = '<span class="led"></span>Mute';
+
+  let value = 0;
+  Object.defineProperty(el, "value", {
+    get: () => value,
+    set(v) {
+      value = Number(v);
+      el.classList.toggle("active", value === 1);
+      el.querySelector(".led").className = "led" + (value === 1 ? " led-on" : "");
+    },
+  });
+  el.value = 0;
+
+  el.addEventListener("click", () => {
+    const next = value === 1 ? 0 : 1;
+    el.value = next;
+    setParam(meta.key, next);
+    row.querySelector(".val").textContent = next === 1 ? "Mute" : "Off";
+  });
+
+  return el;
+}
+
+function buildParamRow(meta) {
+  const row = document.createElement("div");
+  row.className = "row " + accentClass(meta.key);
+  row.dataset.key = meta.key;
+
+  const label = document.createElement("label");
+  label.textContent = meta.name || meta.key;
+  row.appendChild(label);
+
+  let control;
+  let mount;
+  if (meta.key === "mute") {
+    control = buildMuteToggle(meta, row);
+    mount = control;
+  } else if (meta.key === "level") {
+    control = document.createElement("input");
+    control.type = "range";
+    control.className = "fader";
+    control.min = meta.min;
+    control.max = meta.max;
+    control.step = 1;
+    control.addEventListener("pointerdown", () => touching.add(meta.key));
+    control.addEventListener("pointerup", () => touching.delete(meta.key));
+    control.addEventListener("input", () => {
+      setParam(meta.key, Number(control.value));
+      row.querySelector(".val").textContent = control.value;
+    });
+    mount = control;
+  } else {
+    control = buildKnob(meta, row);
+    mount = control;
+    row.classList.add("knob-row");
+  }
+  control.className += " control";
+  row.appendChild(mount);
+
+  const val = document.createElement("span");
+  val.className = "val";
+  row.appendChild(val);
+  return row;
+}
+
+function buildTabs() {
+  const tabs = document.getElementById("tabs");
+  const pagesEl = document.getElementById("pages");
+  tabs.innerHTML = "";
+  pagesEl.innerHTML = "";
+
+  pages.forEach((page, i) => {
+    const tab = document.createElement("button");
+    tab.className = "tab" + (i === activeTab ? " active" : "");
+    tab.textContent = page.name;
+    tab.addEventListener("click", () => selectTab(i));
+    tabs.appendChild(tab);
+
+    const pageEl = document.createElement("div");
+    pageEl.className = "page" + (i === activeTab ? " active" : "");
+    page.keys.forEach((key) => {
+      const meta = metas[key];
+      if (meta) pageEl.appendChild(buildParamRow(meta));
+    });
+    pagesEl.appendChild(pageEl);
+  });
+
+  const seqTab = document.createElement("button");
+  seqTab.className = "tab" + (activeTab === pages.length ? " active" : "");
+  seqTab.textContent = "Seq";
+  seqTab.addEventListener("click", () => selectTab(pages.length));
+  tabs.appendChild(seqTab);
+}
+
+function selectTab(i) {
+  activeTab = i;
+  document.querySelectorAll("#tabs .tab").forEach((t, ti) => t.classList.toggle("active", ti === i));
+  document.querySelectorAll("#pages .page").forEach((p, pi) => p.classList.toggle("active", pi === i));
+  document.getElementById("seq-page").classList.toggle("active", i === pages.length);
+}
+
+function applyParamValue(key, snap) {
+  if (touching.has(key)) return;
+  const row = document.querySelector(`.row[data-key="${CSS.escape(key)}"]`);
+  if (!row) return;
+  const control = row.querySelector(".control");
+  if (document.activeElement === control) return;
+  if (control.tagName === "SELECT") {
+    control.value = Math.round(snap.value);
+  } else {
+    control.value = snap.value;
+  }
+  row.querySelector(".val").textContent = snap.display;
+}
+
+async function setParam(key, value) {
+  try {
+    await fetch(`/api/params/${encodeURIComponent(key)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
+  } catch (e) { console.error("setParam failed", key, e); }
+}
+
+// -- track picker ---------------------------------------------------------
+let trackButtonsBuilt = false;
+function buildTrackButtons() {
+  const wrap = document.getElementById("track-picker");
+  wrap.innerHTML = "";
+  for (let t = 0; t < 6; t++) {
+    const b = document.createElement("button");
+    b.className = "track-btn";
+    b.textContent = "T" + (t + 1);
+    b.addEventListener("click", () => setTrack(t));
+    wrap.appendChild(b);
+  }
+  trackButtonsBuilt = true;
+}
+
+async function setTrack(t) {
+  try {
+    await fetch("/api/track", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track: t }),
+    });
+  } catch (e) { console.error("setTrack failed", e); }
+}
+
+function applyTrack(track) {
+  if (!trackButtonsBuilt) buildTrackButtons();
+  document.querySelectorAll(".track-btn").forEach((b, i) => b.classList.toggle("active", i === track));
+  document.querySelectorAll(".seq-row").forEach((r) => {
+    r.classList.toggle("current", Number(r.dataset.track) === track);
+  });
+}
+
+// -- SEQ grid ---------------------------------------------------------
+let seqGridBuilt = false;
+function buildSeqGrid() {
+  const grid = document.getElementById("seq-grid");
+  const muteRow = document.getElementById("mute-row");
+  grid.innerHTML = "";
+  muteRow.innerHTML = "";
+  for (let t = 0; t < 6; t++) {
+    const row = document.createElement("div");
+    row.className = "seq-row";
+    row.dataset.track = t;
+    const label = document.createElement("span");
+    label.className = "track-label";
+    label.textContent = "T" + (t + 1);
+    row.appendChild(label);
+    for (let c = 0; c < 8; c++) {
+      const btn = document.createElement("button");
+      btn.className = "seq-step";
+      btn.dataset.track = t;
+      btn.dataset.col = c;
+      btn.addEventListener("click", () => toggleStep(t, Number(btn.dataset.step)));
+      row.appendChild(btn);
+    }
+    const spacer = document.createElement("span");
+    row.appendChild(spacer);
+    grid.appendChild(row);
+
+    const mute = document.createElement("button");
+    mute.className = "mute-btn";
+    mute.textContent = "T" + (t + 1);
+    mute.addEventListener("click", () => toggleMute(t));
+    mute.dataset.track = t;
+    muteRow.appendChild(mute);
+  }
+  seqGridBuilt = true;
+
+  document.getElementById("btn-play").addEventListener("click", () => transport("play"));
+  document.getElementById("btn-stop").addEventListener("click", () => transport("stop"));
+  document.getElementById("btn-record").addEventListener("click", () => transport("record"));
+  document.getElementById("seq-page-toggle").addEventListener("click", () => {
+    const cur = Number(document.getElementById("seq-page-toggle").dataset.page || 0);
+    setSeqPage(cur === 0 ? 1 : 0);
+  });
+}
+
+async function toggleStep(track, step) {
+  try {
+    await fetch("/api/seq/step", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track, step }),
+    });
+  } catch (e) { console.error("toggleStep failed", e); }
+}
+
+async function toggleMute(track) {
+  try {
+    await fetch("/api/seq/mute", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track }),
+    });
+  } catch (e) { console.error("toggleMute failed", e); }
+}
+
+async function setSeqPage(page) {
+  try {
+    await fetch("/api/seq/page", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page }),
+    });
+  } catch (e) { console.error("setSeqPage failed", e); }
+}
+
+async function transport(action) {
+  try {
+    await fetch("/api/transport", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+  } catch (e) { console.error("transport failed", e); }
+}
+
+function applySeq(seq, track) {
+  if (!seqGridBuilt) buildSeqGrid();
+  const offset = (seq.stepPage || 0) * 8;
+  document.querySelectorAll(".seq-step").forEach((btn) => {
+    const t = Number(btn.dataset.track);
+    const step = offset + Number(btn.dataset.col);
+    btn.dataset.step = step;
+    const on = !!(seq.steps && seq.steps[t] && seq.steps[t][step]);
+    btn.classList.toggle("on", on);
+    btn.classList.remove("red", "yellow");
+  });
+  document.querySelectorAll(".mute-btn").forEach((btn) => {
+    const t = Number(btn.dataset.track);
+    btn.classList.toggle("on", !!(seq.mutes && seq.mutes[t]));
+  });
+  document.getElementById("btn-play").classList.toggle("on", !!seq.playing);
+  document.getElementById("btn-record").classList.toggle("on", !!seq.recording);
+  const pageBtn = document.getElementById("seq-page-toggle");
+  pageBtn.dataset.page = seq.stepPage || 0;
+  pageBtn.textContent = (seq.stepPage || 0) === 0 ? "Steps 1-8" : "Steps 9-16";
+
+  // Overlay the currently-selected track's row with the plugin's own
+  // live step-LED colors (playhead flashing during playback) — see
+  // params.go/panelstate.go's doc on why only the selected track has a
+  // hardware-truthful readback.
+  const panel = window.__lastPanel;
+  if (panel && panel.track === track && Array.isArray(panel.steps)) {
+    document.querySelectorAll(`.seq-step[data-track="${track}"]`).forEach((btn) => {
+      const step = Number(btn.dataset.step);
+      const color = panel.steps[step];
+      if (color === 1) { btn.classList.add("on"); }
+      else if (color === 2) { btn.classList.add("on", "red"); }
+      else if (color === 3) { btn.classList.add("on", "yellow"); }
+    });
+  }
+}
+
+// -- LCD visualizer -----------------------------------------------------
+function drawLCD(base64) {
+  if (!base64) return;
+  const canvas = document.getElementById("lcd");
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(128, 64);
+  let bytes;
+  try {
+    bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  } catch (e) { return; }
+  for (let y = 0; y < 64; y++) {
+    for (let x = 0; x < 128; x++) {
+      const bitIdx = y * 128 + x;
+      const byte = bytes[bitIdx >> 3] || 0;
+      const lit = (byte & (0x80 >> (bitIdx % 8))) !== 0;
+      const p = (y * 128 + x) * 4;
+      if (lit) {
+        img.data[p] = 0x9a; img.data[p + 1] = 0xff; img.data[p + 2] = 0xb0; img.data[p + 3] = 255;
+      } else {
+        img.data[p] = 0x0a; img.data[p + 1] = 0x1a; img.data[p + 2] = 0x0e; img.data[p + 3] = 255;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// -- I/O ------------------------------------------------------------------
+function ioOptionsKey(options) { return options.map((o) => o.label + (o.current ? "*" : "")).join("\n"); }
+const ioSelectState = {};
+function buildIOSelect(id, options) {
+  const el = document.getElementById(id);
+  const key = ioOptionsKey(options);
+  if (ioSelectState[id] === key) return;
+  if (touching.has(id)) return;
+  ioSelectState[id] = key;
+  el.innerHTML = "";
+  options.forEach((opt, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = opt.label;
+    if (opt.current) o.selected = true;
+    el.appendChild(o);
+  });
+}
+async function setIO(kind, index) {
+  try {
+    await fetch(`/api/io/${kind}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index }),
+    });
+  } catch (e) { console.error("setIO failed", kind, e); }
+}
+let ioWired = false;
+function applyIO(io) {
+  buildIOSelect("io-midi", io.midi || []);
+  buildIOSelect("io-pcm", io.device || []);
+  buildIOSelect("io-channel", io.channel || []);
+  buildIOSelect("io-recv-channel", io.recvChannel || []);
+  if (!ioWired) {
+    for (const [id, kind] of [["io-midi", "midi"], ["io-pcm", "pcm"], ["io-channel", "channel"], ["io-recv-channel", "recv-channel"]]) {
+      const el = document.getElementById(id);
+      el.addEventListener("focus", () => touching.add(id));
+      el.addEventListener("blur", () => { touching.delete(id); ioSelectState[id] = null; });
+      el.addEventListener("change", (e) => setIO(kind, Number(e.target.value)));
+    }
+    ioWired = true;
+  }
+}
+
+// Base channel: options are always 1-16 (never change), unlike the I/O
+// selects above whose option lists are rebuilt from live system state —
+// so this only needs to build once and just track the selected value,
+// same touching-guard as the I/O selects so a poll can't yank the
+// dropdown out from under an in-progress selection.
+let baseChannelBuilt = false;
+function applyBaseChannel(ch) {
+  const el = document.getElementById("seq-base-channel");
+  if (!baseChannelBuilt) {
+    for (let i = 0; i < 16; i++) {
+      const o = document.createElement("option");
+      o.value = i;
+      o.textContent = i + 1;
+      el.appendChild(o);
+    }
+    el.addEventListener("focus", () => touching.add("seq-base-channel"));
+    el.addEventListener("blur", () => touching.delete("seq-base-channel"));
+    el.addEventListener("change", (e) => setBaseChannel(Number(e.target.value)));
+    baseChannelBuilt = true;
+  }
+  if (!touching.has("seq-base-channel")) el.value = ch;
+}
+async function setBaseChannel(ch) {
+  try {
+    await fetch("/api/base-channel", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: ch }),
+    });
+  } catch (e) { console.error("setBaseChannel failed", e); }
+}
+
+function applyAudioStatus(audio, deviceReady) {
+  const el = document.getElementById("status");
+  const led = document.getElementById("status-led");
+  const text = document.getElementById("status-text");
+  if (audio.ready && deviceReady === false) {
+    el.className = "notready";
+    led.className = "led";
+    text.textContent = "Booting…";
+    return;
+  }
+  el.className = audio.ready ? "ready" : "notready";
+  led.className = "led" + (audio.ready ? " led-on" : "");
+  text.textContent = audio.ready ? "Running" : (audio.message || "Not ready").split("\n")[0];
+}
+
+function applyDiag(diag) {
+  const el = document.getElementById("diag");
+  const cpu = typeof diag.cpuPercent === "number" ? diag.cpuPercent.toFixed(1) : "?";
+  const voices = typeof diag.activeVoices === "number" ? diag.activeVoices : "?";
+  el.textContent = `CPU ${cpu}% · voices ${voices}`;
+}
+
+let pagesBuilt = false;
+function applyState(state) {
+  if (!pagesBuilt && pages.length) {
+    buildTabs();
+    pagesBuilt = true;
+  }
+  for (const [key, snap] of Object.entries(state.params || {})) {
+    applyParamValue(key, snap);
+  }
+  applyTrack(state.track || 0);
+  window.__lastPanel = state.panel || null;
+  applySeq(state.seq || {}, state.track || 0);
+  if (state.panel && state.panel.lcd) drawLCD(state.panel.lcd);
+  applyIO(state.io || {});
+  applyBaseChannel(state.baseChannel || 0);
+  applyAudioStatus(state.audio || {}, (state.diag || {}).deviceReady);
+  applyDiag(state.diag || {});
+  document.getElementById("version").textContent = state.version ? `v${state.version}` : "";
+}
+
+// -- LCD screen FX (cosmetic, client-only — see #lcd-fx's CSS comment) --
+const LCD_FX_KEY = "pumma-lcdfx";
+
+function loadLcdFx() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LCD_FX_KEY));
+    if (saved) return { enabled: !!saved.enabled, intensity: Number(saved.intensity) || 0 };
+  } catch (e) { /* no saved state, or storage unavailable — use the default */ }
+  return { enabled: false, intensity: 40 };
+}
+
+function applyLcdFx(state) {
+  document.getElementById("lcd-fx").style.setProperty(
+    "--lcd-fx-opacity", state.enabled ? (state.intensity / 100) : 0);
+  document.getElementById("lcdfx-toggle").classList.toggle("active", state.enabled);
+  document.getElementById("lcdfx-toggle").querySelector(".led").className = "led" + (state.enabled ? " led-on" : "");
+  document.getElementById("lcdfx-toggle-text").textContent = state.enabled ? "On" : "Off";
+  const slider = document.getElementById("lcdfx-intensity");
+  slider.value = state.intensity;
+  slider.disabled = !state.enabled;
+}
+
+function initLcdFx() {
+  const state = loadLcdFx();
+  applyLcdFx(state);
+  document.getElementById("lcdfx-toggle").addEventListener("click", () => {
+    state.enabled = !state.enabled;
+    applyLcdFx(state);
+    localStorage.setItem(LCD_FX_KEY, JSON.stringify(state));
+  });
+  document.getElementById("lcdfx-intensity").addEventListener("input", (e) => {
+    state.intensity = Number(e.target.value);
+    applyLcdFx(state);
+    localStorage.setItem(LCD_FX_KEY, JSON.stringify(state));
+  });
+}
+
+async function init() {
+  const data = await (await fetch("/api/params")).json();
+  metas = Object.fromEntries((data.params || []).map((m) => [m.key, m]));
+  pages = data.pages || [];
+
+  const es = new EventSource("/sse/state");
+  es.onmessage = (ev) => applyState(JSON.parse(ev.data));
+  es.onerror = () => {
+    document.getElementById("status").className = "notready";
+    document.getElementById("status-led").className = "led";
+    document.getElementById("status-text").textContent = "Disconnected — retrying…";
+  };
+}
+
+initLcdFx();
+init();
+</script>
+</body>
+</html>

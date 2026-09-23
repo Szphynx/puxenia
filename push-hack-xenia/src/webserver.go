@@ -40,10 +40,12 @@ const stateBroadcastInterval = 100 * time.Millisecond
 // are already the single source of truth the on-screen UI reads too.
 type webServer struct {
 	version string
+	pmURL   string
 	params  *paramState
 	io      *ioState
 	astatus *audioStatus
 	diag    *diagStats
+	level   *levelMeter
 	ctl     chan<- controlEvent
 	broker  *sse.Broker[[]byte]
 }
@@ -85,6 +87,13 @@ func (ws *webServer) buildState() map[string]any {
 		// whether a heavier future emulation would fit, not a guess from
 		// render-time budget alone.
 		"diag": buildDiagState(ws.diag),
+		// focused/level: push-hub's picker reads these (GET /api/state) to
+		// show this hack as "alive" (VU meter + channel) or greyed out/
+		// disconnected — see docs/push-hub-proposal.md and display.go's
+		// focused var. Unaffected by, and meaningful with or without,
+		// push-hub actually being installed.
+		"focused": isFocused(),
+		"level":   ws.level.get(),
 	}
 }
 
@@ -153,6 +162,25 @@ func (ws *webServer) handleSetParam(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// handleFocus is push-hub's focus/defocus call (docs/push-hub-proposal.md):
+// an absolute on/off, same setUI path local Shift+Device uses (chord.go/
+// display.go), plus the separate focused gate that mutes Push3-sourced
+// pad/CC input (main.go's Fixed()) and this hack's own audio output
+// (audiosession.go's run loop) while defocused. Not gated on hubPresent —
+// if something POSTs here, honor it regardless of the startup probe.
+func (ws *webServer) handleFocus(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	setFocused(body.On)
+	setUI(ws.pmURL, body.On, ws.params, ws.io, ws.astatus, ws.level, ws.diag)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleIO serves the SETTINGS page's 3 column option lists (MIDI IN,
 // AUDIO OUTPUT, AUDIO CHANNEL) — also included in buildState, exposed
 // separately since the option lists themselves don't need SSE-rate polling.
@@ -190,17 +218,18 @@ func (ws *webServer) handleSetIO(set func(int) error) http.HandlerFunc {
 // fires. Fire-and-forget from runSupervised, same shape as
 // runDependencyWatcher/runDisplayLoop — it dies with the whole process on
 // crash/restart, consistent with every other hack exposing a web_ui.
-func runWebServer(port int, version string, params *paramState, io *ioState, astatus *audioStatus, diag *diagStats,
-	ctl chan<- controlEvent, shutdown <-chan struct{}) {
+func runWebServer(port int, version string, pmURL string, params *paramState, io *ioState, astatus *audioStatus, diag *diagStats,
+	level *levelMeter, ctl chan<- controlEvent, shutdown <-chan struct{}) {
 
 	broker := sse.NewBroker[[]byte](8, false)
-	ws := &webServer{version: version, params: params, io: io, astatus: astatus, diag: diag, ctl: ctl, broker: broker}
+	ws := &webServer{version: version, pmURL: pmURL, params: params, io: io, astatus: astatus, diag: diag, level: level, ctl: ctl, broker: broker}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/state", ws.handleState)
 	mux.HandleFunc("GET /api/params", ws.handleParams)
 	mux.HandleFunc("GET /sse/state", ws.handleSSE)
 	mux.HandleFunc("POST /api/params/{key}", ws.handleSetParam)
+	mux.HandleFunc("POST /api/focus", ws.handleFocus)
 	mux.HandleFunc("GET /api/io", ws.handleIO)
 	mux.HandleFunc("POST /api/io/midi", ws.handleSetIO(ws.io.SetMIDIByIndex))
 	mux.HandleFunc("POST /api/io/pcm", ws.handleSetIO(ws.io.SetDeviceByIndex))
