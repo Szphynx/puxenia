@@ -558,11 +558,20 @@ func (s *audioStatus) get() (ready bool, msg string) {
 }
 
 const msgWaitingForCard = "Loopback Audio driver not loaded.\nInstall/enable push-audio-loopback."
+
+// msgWaitingForLive's step 3 calls out "(2nd input)" -- this hack writes
+// to hw:Audio,1,1 (subdevice 1), a DIFFERENT PCM stream from push-hack-
+// xenia's hw:Audio,1,0 (see config.go's defaultConfig), specifically so
+// the two hacks don't fight over exclusive access to the same ALSA hw
+// device when both run at once via push-hub. That means this needs its
+// OWN separate Live track, routed to the loopback card's second input,
+// not the same one push-hack-xenia's setup already uses.
 const msgWaitingForLive = "1. Go to Push Audio Settings.\n" +
 	"2. Select Devices.\n" +
-	"3. Enable one input on \"Push Hack Virtual Audio PCM\".\n" +
+	"3. Enable the 2nd input on \"Push Hack Virtual Audio PCM\"\n" +
+	"   (subdevice 1 -- separate from puXenia's own input).\n" +
 	"4. Select an audio track.\n" +
-	"5. Set the track's input to the input you enabled in Devices.\n" +
+	"5. Set the track's input to that 2nd input.\n" +
 	"6. Turn on Monitor In."
 
 // watchHWParams is the top-level audio supervisor — identical shape to

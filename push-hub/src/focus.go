@@ -78,6 +78,23 @@ func defocusAll(all []hackStatus) {
 	}
 }
 
+// defocusEntries is defocusAll's counterpart for the raw hacks.json
+// registry, used at push-hub's own startup (main.go) where no poll has
+// run yet -- registry.go's pollRegistry does its first poll in its own
+// goroutine, so getStatuses() can still be empty for a beat after boot,
+// too late to catch a hack that raced its way to owning the screen
+// before push-hub even started (deploy-all.sh's default order starts
+// puXenia and puMMa before push-hub -- see docs/todo.md). No Alive check
+// here, unlike defocusAll: setFocus is already a best-effort, silently-
+// no-op-on-unreachable call (see its own doc), and at boot time "is it
+// alive yet" isn't known anyway -- every registered hack gets a defocus
+// POST regardless, harmless for ones that aren't up.
+func defocusEntries(entries []hackEntry) {
+	for _, e := range entries {
+		setFocus(e, false)
+	}
+}
+
 // setServiceRunning starts or stops a registered hack. Tries the standard
 // Debian `service <name> start|stop` wrapper first (in case this install
 // really did go through push-catalog's init.d path), and falls back to
