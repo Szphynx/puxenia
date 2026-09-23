@@ -6,10 +6,15 @@
 # code change -- idempotent where it can be, harmless to repeat where
 # it can't (e.g. re-copying the ROM).
 #
-# Usage: ./deploy.sh
+# Usage: ./deploy.sh [push-host] [ssh-key-path]
+#   Both optional, same positional-args-with-env-fallback shape as
+#   push-hack-mm/deploy.sh and push-hub/deploy.sh (deploy-all.sh calls
+#   all three the same way) -- added after a real mix-up: this script used
+#   to be env-var-only, so passing an IP as $1 silently did nothing and it
+#   fell back to the hardcoded default host instead, with no error.
 # Configure via env vars (defaults match this project's own setup):
-#   PUSH_HOST=192.168.3.89
-#   PUSH_KEY=~/xenia-build/pushkey
+#   PUSH_HOST=192.168.3.89             (overridden by $1 if given)
+#   PUSH_KEY=~/xenia-build/pushkey     (overridden by $2 if given)
 #   ROM_DIR=~/xenia-build/rom          (local dir with the .bin ROM files)
 #   REPO_DIR=~/puxenia                 (this repo's checkout)
 #   NO_BUILD=1                         (skip the build step, just redeploy)
@@ -29,8 +34,8 @@ set -euo pipefail
 # it and this script shouldn't depend on ~/.bashrc having been sourced.
 [[ -x /usr/local/go/bin/go ]] && PATH="/usr/local/go/bin:$PATH"
 
-PUSH_HOST="${PUSH_HOST:-192.168.3.89}"
-PUSH_KEY="${PUSH_KEY:-$HOME/xenia-build/pushkey}"
+PUSH_HOST="${1:-${PUSH_HOST:-192.168.3.89}}"
+PUSH_KEY="${2:-${PUSH_KEY:-$HOME/xenia-build/pushkey}}"
 ROM_DIR="${ROM_DIR:-$HOME/xenia-build/rom}"
 REPO_DIR="${REPO_DIR:-$HOME/puxenia}"
 ALOOP_KO_DIR="${ALOOP_KO_DIR:-$HOME/push-hack-audio-loopback/ko}"
