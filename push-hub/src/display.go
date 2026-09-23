@@ -14,6 +14,7 @@ import (
 	"image"
 	"image/color"
 	"log"
+	"math"
 	"sync"
 	"time"
 
@@ -197,10 +198,18 @@ func renderMenu() *image.NRGBA {
 		const vuX, vuW = 170, 60
 		gfx.FillRect(img, vuX, y-9, vuW, 8, hubDim)
 		if st.Alive && st.Level > 0 {
-			frac := st.Level
-			if frac > 1 {
-				frac = 1
-			}
+			// dbFrac, not the raw linear peak directly -- st.Level is the
+			// same raw 0-1 peak amplitude push-hack-xenia/push-hack-mm's
+			// own SETTINGS-page meters read, and they deliberately convert
+			// it to a dB scale first (see dbFrac's own doc: normal program
+			// material's raw peak sits well under 0.3, so a linear bar
+			// reads as "stuck near empty" even with real, audible signal
+			// present). Without this conversion here too, this row's bar
+			// stayed a barely-visible sliver for perfectly normal audio —
+			// reported as "I don't see audio coming out in the hub's VU
+			// meter" even while that same hack's own meter (which DOES
+			// apply dbFrac) showed clear activity.
+			frac := dbFrac(st.Level)
 			if w := int(float64(vuW) * frac); w > 0 {
 				gfx.FillRect(img, vuX, y-9, w, 8, hubGreen)
 			}
@@ -246,4 +255,23 @@ func renderMenu() *image.NRGBA {
 	bottom[7] = widgets.SoftButton{Label: "QUIT", State: widgets.SoftOff} // see focus.go's quitSelf
 	widgets.DrawBotStrip(img, widgets.Default, screenH-botStripH, screenW, screenW/8, botStripH, bottom, "")
 	return img
+}
+
+// meterMinDB/dbFrac -- identical to push-hack-xenia's and push-hack-mm's
+// own display.go: a linear 0-1 peak reads as "stuck near empty" on a
+// linear bar for normal program material (nearly all its range spent
+// near zero), so convert to a dB scale before drawing a row's VU bar
+// above. -48dB floor maps to an empty bar, 0dB (full scale) to a full
+// one.
+const meterMinDB = -48.0
+
+func dbFrac(peak float64) float64 {
+	if peak <= 0 {
+		return 0
+	}
+	db := 20 * math.Log10(peak)
+	if db < meterMinDB {
+		return 0
+	}
+	return (db - meterMinDB) / -meterMinDB
 }
