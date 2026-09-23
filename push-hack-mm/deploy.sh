@@ -70,4 +70,13 @@ echo "== Relaunching push-mm on $PUSH_IP =="
 ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" \
   "cd $REMOTE_DIR && chmod +x push-mm && nohup ./push-mm -config hack.json > push-mm.log 2>&1 &"
 
+echo "== Clearing any stuck push-hub loading splash for mm (best-effort) =="
+# Same reasoning as push-xenia's own deploy.sh: this redeploy never goes
+# through push-hub's own START/STOP, so a stuck splash from before it
+# would otherwise sit there until push-hub's alive-poll or splashTimeout
+# catches up (push-hub/src/splash.go's doc). Best-effort -- push-hub may
+# not be installed/running at all (a solo MM-only checkout).
+ssh "${SSH_OPTS[@]}" "root@$PUSH_IP" \
+  "curl -fsS -m 2 -X POST 'http://localhost:7709/api/splash/clear?id=mm' >/dev/null 2>&1 || true" || true
+
 echo "Deployed and (re)launched. Logs: ssh ${SSH_OPTS[*]} root@$PUSH_IP tail -f $REMOTE_DIR/push-mm.log"
