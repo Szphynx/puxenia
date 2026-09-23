@@ -17,7 +17,11 @@
 // voice" directly with pads) by simulating the real front panel's Track
 // select + Trigger key presses (see mm_plugin.cpp's toggle_step) — not by
 // reimplementing sequencing logic in Go, since mdLib runs the actual
-// Monomachine firmware's own real sequencer.
+// Monomachine firmware's own real sequencer. Shift+pad on a track row,
+// even on the SEQ page, is a third mode layered on top of that: a live
+// audition note on that row's track (ctlLiveNote, see Fixed()'s doc),
+// so a track's own sound can still be played/checked while its pattern
+// is being edited, without leaving the SEQ page.
 package main
 
 /*
@@ -75,6 +79,7 @@ const (
 	ctlTrackStep                  // delta = +1/-1 (D-Pad Up/Down)
 	ctlToggleStep                 // idx = track, delta = step (SEQ page pad press)
 	ctlMuteToggle                 // idx = track (SEQ page bottom-row pad press)
+	ctlLiveNote                   // idx = track, delta = note, val = velocity (only for key=="on"), key = "on"|"off" — Shift+pad live audition on the SEQ page (see main.go's Fixed())
 	ctlTransport                  // key = "play"|"stop"|"record" — web UI's transport buttons; works regardless of Push's current on-screen page
 	ctlStepPage                   // idx = 0 (toggle) or 1 (explicit page, val = 0/1) — web UI's page flip
 	ctlBaseChannel                // val = absolute 0-indexed channel (0-15) — web UI's base-channel selector; SEQ page's own encoder 0 already sets this directly in audiosession.go, this is the same effect via an absolute value instead of a delta
@@ -225,17 +230,52 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 	}
 
 	if fromPush3 && push3.IsPadNote(data[1]) && uiIsOn() && h.params.Page() == pageSeq {
-		// SEQ mode: this pad press is a step/mute toggle, not a note.
-		// Note Off is a no-op here (a tap is press-and-release on the
-		// SAME logical action, applied entirely on Note On, matching
+		col, row := push3.PadCoord(data[1])
+		isTrackRow := row >= 1 && row <= mmNumTracks // rows 1-6 (bottom-up): tracks 1-6, see leds.go's syncPadLEDs doc for why row 0 is the spare row, not a gap in the middle
+
+		// Shift+pad on a track row previews/plays that track live instead
+		// of toggling its step — requested directly ("use pads to modify
+		// the synth engines" while still on the SEQ page, not just on the
+		// knob-grid pages, which already forward pads as plain notes —
+		// see this function's tail below). Sustained like a normal held
+		// pad: Note On (only while Shift is actually down) starts it,
+		// Note Off ends it whenever it arrives (checked unconditionally,
+		// not gated on Shift still being held, since the user may have
+		// released Shift before releasing the pad) — audiosession.go's
+		// ctlLiveNote case does the actual bridge_plugin_on_midi call, the
+		// one goroutine allowed to touch the plugin. A stray Note Off
+		// routed here with no matching live note (e.g. the tail end of an
+		// ordinary step-toggle tap, which only ever acts on Note On) is a
+		// harmless no-op on the plugin side.
+		if isTrackRow && (isShiftHeld() || evType == alsaseq.EvNoteOff) {
+			track := row - 1
+			var ev controlEvent
+			switch {
+			case evType == alsaseq.EvNoteOn && data[2] > 0:
+				ev = controlEvent{kind: ctlLiveNote, idx: track, delta: int(data[1]), val: float64(data[2]), key: "on"}
+			case evType == alsaseq.EvNoteOff || (evType == alsaseq.EvNoteOn && data[2] == 0):
+				ev = controlEvent{kind: ctlLiveNote, idx: track, delta: int(data[1]), key: "off"}
+			default:
+				return
+			}
+			select {
+			case h.ctl <- ev:
+			default:
+				log.Printf("control channel full, dropped live-note %s", ev.key)
+			}
+			return
+		}
+
+		// Plain SEQ mode: this pad press is a step/mute toggle, not a
+		// note. Note Off is a no-op here (a tap is press-and-release on
+		// the SAME logical action, applied entirely on Note On, matching
 		// mm_plugin.cpp's toggle_step, which itself presses+releases the
 		// trig key in one call) — only forward Note On with velocity>0.
 		if evType != alsaseq.EvNoteOn || data[2] == 0 {
 			return
 		}
-		col, row := push3.PadCoord(data[1])
 		switch {
-		case row >= 1 && row <= mmNumTracks: // rows 1-6 (bottom-up): tracks 1-6's step grid, see leds.go's syncPadLEDs doc for why row 0 is the spare row, not a gap in the middle
+		case isTrackRow:
 			track := row - 1
 			step := col + h.seq.StepPage()*mmStepsPerPage
 			select {

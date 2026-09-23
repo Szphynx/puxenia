@@ -81,6 +81,34 @@ it move. This is an activity indicator (note held / not held, decayed),
 NOT a true loudness meter — a quiet patch and a loud patch on the same
 track will show the same bar.
 
+## Shift+pad live audition on the SEQ page
+
+Requested directly, alongside the two items above: pads on the SEQ page
+were step-toggle only, with no way to hear/play a track live without
+leaving SEQ entirely (every other page already forwards pads as live
+notes to whichever track is selected — that part already worked and
+needed no change).
+
+Added: holding Shift and pressing a pad on a track row (rows 1-6, same
+rows the step grid uses) fires a live Note On on that row's track
+instead of toggling the step, and the matching Note Off (whenever it
+arrives — not gated on Shift still being held) ends it, same as an
+ordinary held pad. A plain (no Shift) tap on the same pad still toggles
+the step exactly as before.
+
+Implementation note: unlike `ctlToggleStep`, sending a raw Note On via
+`bridge_plugin_on_midi` does NOT itself switch which track is selected —
+`mm_plugin.cpp`'s `on_midi` always targets whatever `inst->currentTrack`
+already is. So the new `ctlLiveNote` case
+(`push-hack-mm/src/audiosession.go`) explicitly does the track switch
+itself before sending the note (only on Note On, never on Note Off, so a
+stray/mismatched release can't silently retarget the currently-viewed
+track).
+
+**Not hardware-confirmed** — compiles clean, but needs a real deploy to
+confirm Shift+pad actually plays the right track's sound without
+disturbing normal step-toggle taps on the same pads.
+
 ## "Looks ready but Play does nothing, transport frozen, stray line on the
 ## pad grid" — the ~20s ROM boot window had zero on-screen indication
 
