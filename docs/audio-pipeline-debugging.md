@@ -226,6 +226,41 @@ against. If "hangs and drags" persists after this, the debounce delay
 (30ms) may need to go up, or another cause entirely is in play — don't
 assume this was the only possible source without re-testing.
 
+## 9. "Audio not ready" on BOTH puXenia and puMMa, together, for no
+## apparent reason — an ALSA hw device conflict BETWEEN the two hacks,
+## not a Live setting
+
+Reported after a full `deploy-all.sh` (all three hacks) for the first
+time: puXenia showed "not ready" despite nothing about its own Live
+routing having changed, and puMMa showed the same. Root cause: both
+hacks' `config.go` defaulted to the **identical** PCM device,
+`hw:Audio,1,0`. An ALSA hw device is exclusive-access — two separate
+processes opening the same one for playback at once means the second
+`bridge_pcm_open` fails outright (EBUSY), which `watchHWParams` then
+reports as `msgWaitingForLive` ("go check your Live routing") — a
+genuinely misleading message, since the real conflict is with the OTHER
+hack, not anything wrong in Live. This never showed up before because
+only one hack ever ran at a time before push-hub made running both
+together the normal case.
+
+**Fix**: `push-hack-mm`'s default `PCMDevice` moved to `hw:Audio,1,1`
+(subdevice 1) — `push-hack-xenia` keeps `,1,0` unchanged. snd-aloop's own
+default `pcm_substreams` is 8 per device (this repo's `deploy.sh` insmods
+it with no override), so subdevice 1 is a real, independent PCM stream,
+not a guess. **This needs a matching change in Live**, not just the
+code: puMMa now needs its OWN separate audio track routed to the
+loopback card's *second* input (subdevice 1), distinct from whatever
+track puXenia already uses — `msgWaitingForLive`'s on-screen instructions
+now say so, but the Live-side track itself still has to be added by
+hand, same one-time setup as puXenia's own track originally was.
+
+**Directive**: if two hacks are ever meant to run simultaneously and both
+write audio, check they don't share a PCM device string before assuming
+either one's own audio pipeline is broken — an ALSA "not ready"/EBUSY
+symptom from a device conflict between two of THIS project's OWN
+processes looks identical to a Live-routing problem from the affected
+hack's own point of view.
+
 ## General debugging directive for this project
 
 Given how many of the above turned out to be "looks completely correct

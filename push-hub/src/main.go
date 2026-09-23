@@ -195,6 +195,20 @@ func main() {
 	go watchHubPort(handler, shutdown)
 	go runHubDisplayLoop(pmURL, shutdown)
 
+	// Defocus every registered hack BEFORE claiming the screen, not
+	// after -- same "release before claim" ordering as onChordCC's own
+	// reclaim (chord.go) and the FOCUS-button fix (CCScreenBot1 above),
+	// just for the boot case: deploy-all.sh's default order starts
+	// puXenia/puMMa before push-hub, so either can win the race to
+	// toggle its own local Shift+Device UI on (their hubPresent probe
+	// finds nothing yet) before push-hub even exists to tell it
+	// otherwise. Without this, that hack's own display loop keeps
+	// pushing frames indefinitely (nothing else ever tells it to stop),
+	// dominating over push-hub's own -- the reported "boots straight to
+	// puxenia" even once push-hub is clearly running. See focus.go's
+	// defocusEntries.
+	defocusEntries(registry)
+
 	// Own the screen from boot — the whole point of a "dualboot" picker
 	// is that it's the first thing shown, before anything is focused.
 	setHubUI(pmURL, true)

@@ -47,9 +47,28 @@ type persistedConfig struct {
 
 func defaultConfig() persistedConfig {
 	return persistedConfig{
-		MidiClient:    alsaseq.Push3ClientDefault,
-		MidiPort:      alsaseq.Push3PortDefault,
-		PCMDevice:     "hw:Audio,1,0",
+		MidiClient: alsaseq.Push3ClientDefault,
+		MidiPort:   alsaseq.Push3PortDefault,
+		// ,1,1 (subdevice 1), NOT push-hack-xenia's own ,1,0 -- an ALSA hw
+		// device is exclusive-access, so two separate processes opening
+		// the identical "hw:Audio,1,0" for playback at once means the
+		// second bridge_pcm_open simply fails (EBUSY), which
+		// watchHWParams then reports as "not ready" / "waiting for Live"
+		// -- a real, misleading symptom once both hacks run together via
+		// push-hub (previously untested, since only one hack ran at a
+		// time before push-hub existed): the message blames Live/audio
+		// setup when the actual conflict is with the OTHER hack.
+		// snd-aloop's own default pcm_substreams is 8 per device (this
+		// repo's deploy.sh insmods it with no override), so subdevice 1
+		// is a real, independent PCM stream, not a guess -- but it needs
+		// a SEPARATE Live audio track pointed at the loopback card's
+		// matching read-side subdevice (device 0, subdevice 1) to
+		// actually carry sound; msgWaitingForLive's own instructions
+		// don't yet mention this second track. ChannelOffset alone can't
+		// fix this: it only picks a channel pair *within* one process's
+		// own already-open device, it doesn't let two processes share
+		// exclusive access to the same hw device at all.
+		PCMDevice:     "hw:Audio,1,1",
 		ChannelOffset: 0,
 		RecvChannel:   -1,
 		BaseChannel:   0,
