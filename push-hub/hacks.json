@@ -7,7 +7,8 @@
     "dir": "/tmp/xenia-hack",
     "exec": "./push-xenia",
     "process": "push-xenia",
-    "log": "push-xenia.log"
+    "log": "push-xenia.log",
+    "splash": "X"
   },
   {
     "id": "mm",
@@ -17,6 +18,7 @@
     "dir": "/tmp/mm-hack",
     "exec": "./push-mm -config hack.json",
     "process": "push-mm",
-    "log": "push-mm.log"
+    "log": "push-mm.log",
+    "splash": "MM"
   }
 ]

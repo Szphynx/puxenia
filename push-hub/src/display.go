@@ -10,6 +10,7 @@ package main
 // directly).
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"log"
@@ -91,7 +92,7 @@ func setHubUI(pmURL string, on bool) {
 			log.Printf("hub display: enable midi filter: %v", err)
 		}
 		syncHubLEDs(pmURL)
-		if err := client.PushImage(renderMenu()); err != nil {
+		if err := client.PushImage(currentHubFrame()); err != nil {
 			log.Printf("hub display: push frame: %v", err)
 		}
 		log.Printf("push-hub: menu ON (Shift+Device)")
@@ -130,9 +131,15 @@ func runHubDisplayLoop(pmURL string, shutdown <-chan struct{}) {
 		if !hubUIOn() {
 			continue
 		}
-		if err := client.PushImage(renderMenu()); err != nil {
+		// currentHubFrame, not renderMenu directly -- draws the loading
+		// splash (splash.go) instead of/blended with the menu while one
+		// is active, the plain menu otherwise.
+		frameStart := time.Now()
+		frame := currentHubFrame()
+		if err := client.PushImage(frame); err != nil {
 			log.Printf("hub display: push frame: %v", err)
 		}
+		logChokepoint("hub display frame", time.Since(frameStart))
 	}
 }
 
@@ -153,6 +160,13 @@ func renderMenu() *image.NRGBA {
 	// margin, still well inside topStripH's reserved 16px band before the
 	// first hack row starts at topStripH+14=30.
 	text.DrawScaled(img, 8, 18, 2, "PUSH HUB", hubInk)
+
+	// This process's own CPU% and the system's overall load (cpu.go's
+	// watchCPU, sampled every cpuSampleInterval) -- top-right, clear of
+	// the scaled title's own width even for the widest realistic value.
+	selfPct, sysPct := GetHubCPU()
+	cpuLabel := fmt.Sprintf("CPU %.0f%%  SYS %.0f%%", selfPct, sysPct)
+	text.Draw(img, screenW-8-text.Width(cpuLabel), 14, cpuLabel, hubDim)
 
 	list := getStatuses()
 	cur := getCursor()
@@ -197,6 +211,15 @@ func renderMenu() *image.NRGBA {
 			ch = "--"
 		}
 		text.Draw(img, vuX+vuW+8, y, ch, ink)
+
+		// Per-hack CPU%, already polled alongside Level/Channel
+		// (registry.go's pollOne reads it from that hack's own
+		// /api/state diag.cpuPercent) but never actually displayed
+		// before now.
+		if st.Alive {
+			cpuLabel := fmt.Sprintf("%.0f%%", st.CPU)
+			text.Draw(img, vuX+vuW+8+60, y, cpuLabel, ink)
+		}
 	}
 
 	var bottom [8]widgets.SoftButton

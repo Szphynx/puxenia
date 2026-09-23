@@ -108,8 +108,14 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 	case push3.CCScreenBot2:
 		if list := getStatuses(); getCursor() < len(list) {
 			target := list[getCursor()]
+			starting := !target.Alive
+			if starting {
+				// Loading splash (splash.go) -- only for an actual START,
+				// not a STOP: nothing to wait on there.
+				triggerSplash(target.ID, target.Splash)
+			}
 			go func() {
-				if err := setServiceRunning(target.hackEntry, !target.Alive); err != nil {
+				if err := setServiceRunning(target.hackEntry, starting); err != nil {
 					log.Printf("start/stop %s: %v", target.ID, err)
 				}
 			}()
@@ -122,6 +128,7 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 		// Device/the screen until restarted. See focus.go's restartHack.
 		if list := getStatuses(); getCursor() < len(list) {
 			target := list[getCursor()]
+			triggerSplash(target.ID, target.Splash) // same loading splash as START
 			go func() {
 				if err := restartHack(target.hackEntry); err != nil {
 					log.Printf("restart %s: %v", target.ID, err)
@@ -182,6 +189,7 @@ func main() {
 	}()
 
 	go pollRegistry(registry, shutdown)
+	go watchCPU(shutdown)
 
 	handler := &midiHandler{pmURL: pmURL}
 	go watchHubPort(handler, shutdown)

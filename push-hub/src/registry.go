@@ -35,6 +35,7 @@ type hackEntry struct {
 	Exec    string `json:"exec"`    // command to run from Dir -- deploy.sh's own nohup command line
 	Process string `json:"process"` // exact process name for pkill -x -- deploy.sh's own stop target
 	Log     string `json:"log"`     // log file name, relative to Dir (defaults to "<id>.log" if empty)
+	Splash  string `json:"splash"`  // big letter(s) shown on the hub's own screen while this hack loads -- see splash.go
 }
 
 // hackStatus is one polled snapshot, refreshed by pollRegistry below.
@@ -112,6 +113,9 @@ func pollRegistry(entries []hackEntry, shutdown <-chan struct{}) {
 // an unreachable/erroring hack just comes back Alive:false, not a crash.
 func pollOne(client *http.Client, e hackEntry) hackStatus {
 	st := hackStatus{hackEntry: e}
+
+	start := time.Now()
+	defer func() { logChokepoint("poll "+e.ID, time.Since(start)) }()
 
 	resp, err := client.Get(e.API + "/api/state")
 	if err != nil {
