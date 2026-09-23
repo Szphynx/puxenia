@@ -135,6 +135,16 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 				}
 			}()
 		}
+	case push3.CCScreenBot6:
+		// ABLETON -- hide the hub menu and hand the screen back to
+		// Live's own native UI, WITHOUT focusing any hack and without
+		// quitting push-hub itself (that's QUIT, button 8, a different
+		// action). Just setHubUI(false): no hack needs defocusing here
+		// the way onChordCC's reclaim does, since nothing is being
+		// focused -- push-hub simply releases its own takeover. Shift+
+		// Device (onChordCC) is still the way back to this menu
+		// afterward, same as always.
+		go setHubUI(h.pmURL, false)
 	case push3.CCScreenBot7:
 		// RESTART (push-hub itself) -- see focus.go's restartSelf.
 		go func() {

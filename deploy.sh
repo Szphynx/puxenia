@@ -59,7 +59,16 @@ echo "==> Stopping any running push-xenia on Push"
 # substring "push-xenia", so pkill -f can match and kill it before "||
 # true" ever runs, dropping the ssh session and aborting this script (set
 # -e) with no further output. Same bug, same fix, as push-hack-mm/deploy.sh.
-ssh_ "pkill -x push-xenia" || true
+#
+# Then WAIT for it to actually be gone, not just signaled -- pkill sends
+# SIGTERM and returns immediately, before the target has necessarily
+# finished exiting and released its own binary's file handle. The very
+# next step scp's over that same binary, and a real run hit exactly this:
+# `scp: /tmp/xenia-hack/push-xenia: Text file busy`, aborting the deploy
+# right after a full rebuild. Poll for up to ~4s (20 * 0.2s) before giving
+# up and proceeding anyway -- best-effort, not a hard guarantee, but far
+# less likely to lose the race than proceeding immediately.
+ssh_ 'pkill -x push-xenia 2>/dev/null; for i in $(seq 1 20); do pgrep -x push-xenia >/dev/null || exit 0; sleep 0.2; done; exit 0' || true
 
 echo "==> Ensuring remote directories exist"
 ssh_ "mkdir -p '$REMOTE_DIR/module' '$REMOTE_DIR/ui'"

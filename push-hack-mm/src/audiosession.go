@@ -646,7 +646,20 @@ func watchHWParams(cardID string, rt *sharedConfig, plugin *C.bridge_plugin_t,
 			newSess, err := startAudioSession(plugin, device, hp, midiCh, ctlCh, params, io, seq, rt, level, diag)
 			if err != nil {
 				log.Printf("opening PCM %s: %v — will retry", device, err)
-				status.set(false, msgWaitingForLive)
+				// A real bridge_pcm_open failure (wrong/busy/nonexistent
+				// device string -- e.g. a subdevice that doesn't exist,
+				// or one another hack already has open) is NOT the same
+				// situation as "Live hasn't opened its side yet"
+				// (msgWaitingForLive, above) even though both used to
+				// show the identical on-screen message -- indistinguishable
+				// from the screen alone, reported as "audio not ready
+				// which is a lie" when the real cause turned out to be an
+				// ALSA device conflict between two of this project's own
+				// hacks (see docs/audio-pipeline-debugging.md's section
+				// 9). Show the actual device string and error instead so
+				// this doesn't need a log-file round trip to diagnose
+				// next time.
+				status.set(false, fmt.Sprintf("Can't open audio device:\n%s\n%v", device, err))
 				if !sleepOrStop(waitPollInterval, shutdown) {
 					return
 				}

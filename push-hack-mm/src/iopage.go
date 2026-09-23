@@ -60,15 +60,43 @@ func (io *ioState) buildMIDIRowsLocked() []midiOptions {
 }
 
 type deviceOption struct {
-	label  string
-	device alsapcm.PlaybackDevice
+	label string
+	// hwDevice is the real, subdevice-specific ALSA device string (e.g.
+	// "hw:Audio,1,1") this row commits -- NOT alsapcm.PlaybackDevice's
+	// own HWDevice(), which always hardcodes subdevice 0 ("returns the
+	// ALSA device string for this device's subdevice 0" -- its own doc).
+	// snd-aloop's loopback devices default to 8 substreams each (this
+	// repo's deploy.sh insmods it with no override), so subdevice 0 is
+	// only ever ONE of several real, independently-openable PCM streams.
+	hwDevice string
 }
 
+// buildDeviceRowsLocked lists every subdevice of the loopback card
+// (cardID) specifically -- not, per alsapcm.EnumPlaybackDevices' own
+// scope, every playback device on the whole system, which would also
+// include Push's own physical hardware output (Live's own audio
+// interface; picking it here means fighting Live for the same device,
+// same footgun push-hack-xenia's own equivalent filter already guards
+// against). One row per subdevice, not one row per device, so this hack
+// can be pointed at a DIFFERENT subdevice than push-hack-xenia's own --
+// see config.go's defaultConfig for why that matters (two hacks can't
+// both hold the exact same hw device open at once) and audiosession.go's
+// "Can't open audio device" message for what it actually looks like on
+// screen when a chosen one is unavailable, instead of guessing at a
+// single hardcoded default forever.
 func (io *ioState) buildDeviceRowsLocked() []deviceOption {
 	devices, _ := alsapcm.EnumPlaybackDevices()
-	out := make([]deviceOption, len(devices))
-	for i, d := range devices {
-		out[i] = deviceOption{label: fmt.Sprintf("%s (%s)", d.Name, d.HWDevice()), device: d}
+	var out []deviceOption
+	for _, d := range devices {
+		if d.CardID != cardID {
+			continue
+		}
+		for sub := 0; sub < d.SubdeviceCount; sub++ {
+			out = append(out, deviceOption{
+				label:    fmt.Sprintf("%s (hw:%s,%d,%d)", d.Name, d.CardID, d.Device, sub),
+				hwDevice: fmt.Sprintf("hw:%s,%d,%d", d.CardID, d.Device, sub),
+			})
+		}
 	}
 	return out
 }
@@ -159,7 +187,7 @@ func (io *ioState) commitDevice() {
 	if io.deviceCursor < 0 || io.deviceCursor >= len(rows) {
 		return
 	}
-	io.rt.setPCM(rows[io.deviceCursor].device.HWDevice())
+	io.rt.setPCM(rows[io.deviceCursor].hwDevice)
 	io.saveLocked()
 }
 
@@ -215,7 +243,7 @@ func (io *ioState) DeviceOptions() []ioOption {
 	rows := io.buildDeviceRowsLocked()
 	out := make([]ioOption, len(rows))
 	for i, r := range rows {
-		out[i] = ioOption{Label: r.label, Current: r.device.HWDevice() == curDevice}
+		out[i] = ioOption{Label: r.label, Current: r.hwDevice == curDevice}
 	}
 	return out
 }
@@ -326,7 +354,7 @@ func (io *ioState) render() *image.NRGBA {
 	deviceLabels := make([]string, len(deviceRows))
 	for i, r := range deviceRows {
 		mark := "  "
-		if r.device.HWDevice() == curDevice {
+		if r.hwDevice == curDevice {
 			mark = "> "
 		}
 		deviceLabels[i] = mark + r.label

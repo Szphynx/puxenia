@@ -773,7 +773,17 @@ func watchHWParams(cardID string, rt *sharedConfig, plugin *C.bridge_plugin_t,
 			newSess, err := startAudioSession(plugin, device, hp, midiCh, ctlCh, params, io, rt, level, diag)
 			if err != nil {
 				log.Printf("opening PCM %s: %v — will retry", device, err)
-				status.set(false, msgWaitingForLive)
+				// A real bridge_pcm_open failure (wrong/busy/nonexistent
+				// device string -- e.g. another hack already holding the
+				// same one) is NOT "Live hasn't opened its side yet"
+				// (msgWaitingForLive, above) even though both used to
+				// show the identical on-screen message -- see
+				// docs/audio-pipeline-debugging.md's section 9, where
+				// exactly this ambiguity hid a real ALSA device conflict
+				// between two of this project's own hacks behind a
+				// misleading "check Live" message. Show the actual
+				// device string and error instead.
+				status.set(false, fmt.Sprintf("Can't open audio device:\n%s\n%v", device, err))
 				if !sleepOrStop(waitPollInterval, shutdown) {
 					return
 				}
