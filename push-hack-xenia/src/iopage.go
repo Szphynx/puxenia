@@ -485,6 +485,19 @@ func (io *ioState) render(level *levelMeter) *image.NRGBA {
 	drawColumnTitle(img, 3*settingsColW, "MIDI CHANNEL", t.Gray)
 	drawColumnRows(img, 3*settingsColW, 34, recvChLabels, io.recvChCursor)
 
+	// QUIT/RESTART, this hack's own process-lifecycle controls -- see
+	// selfcontrol.go and main.go's CCScreenBot4/CCScreenBot6 dispatch
+	// (never through ctlCh/drainCtl: this is an OS-level action, not a
+	// DSP-plugin one). Slots 3/5 (CCScreenBot4/6), NOT 0/2/4/6 -- those
+	// four are load-bearing (audiosession.go's drainCtl ctlBottomPress/
+	// pageSettings case: idx 0/2/4/6 commit the MIDI/device/channel/recv-
+	// channel columns respectively), even though this page never actually
+	// labeled them until now. 1/7 are left free.
+	var bottom [8]widgets.SoftButton
+	bottom[3] = widgets.SoftButton{Label: "QUIT", State: widgets.SoftOff}
+	bottom[5] = widgets.SoftButton{Label: "RESTART"}
+	widgets.DrawBotStrip(img, t, screenH-botStripH, screenW, cellW, botStripH, bottom, "")
+
 	return img
 }
 
@@ -501,7 +514,12 @@ func drawColumnTitle(img *image.NRGBA, x int, title string, col color.NRGBA) {
 // renderer rather than 3 calls to widgets.RenderList.
 func drawColumnRows(img *image.NRGBA, x int, top int, labels []string, cursor int) {
 	t := widgets.Default
-	visRows := (screenH - top) / settingsRowH
+	// screenH-botStripH, not screenH: leaves room for render()'s own
+	// bottom strip (QUIT/RESTART) instead of the row list running under
+	// it -- every other page already reserves this same band (botStripH's
+	// own doc: "all pages"), this one just never actually drew anything
+	// into it before.
+	visRows := (screenH - botStripH - top) / settingsRowH
 	scroll := cursor - visRows/2
 	if scroll < 0 {
 		scroll = 0

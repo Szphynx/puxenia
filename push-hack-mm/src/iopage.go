@@ -359,7 +359,15 @@ func (io *ioState) render() *image.NRGBA {
 	var bottom [8]widgets.SoftButton
 	bottom[0] = widgets.SoftButton{Label: "SET"}
 	bottom[2] = widgets.SoftButton{Label: "SET"}
+	// 3 (QUIT) and 5 (RESTART) are otherwise-unused slots between the SET
+	// columns' own bottom-strip buttons (0/2/4/6) -- see selfcontrol.go
+	// and main.go's CCScreenBot4/CCScreenBot6 dispatch. Must stay off
+	// 0/2/4/6 (each hard-wired to a column's own commit, see
+	// audiosession.go's drainCtl ctlBottomPress/pageSettings case) and
+	// off 7 (EXIT).
+	bottom[3] = widgets.SoftButton{Label: "QUIT", State: widgets.SoftOff}
 	bottom[4] = widgets.SoftButton{Label: "SET"}
+	bottom[5] = widgets.SoftButton{Label: "RESTART"}
 	bottom[6] = widgets.SoftButton{Label: "SET"}
 	bottom[7] = widgets.SoftButton{Label: "EXIT"}
 	widgets.DrawBotStrip(img, widgets.Default, screenH-botStripH, screenW, cellW, botStripH, bottom, "")

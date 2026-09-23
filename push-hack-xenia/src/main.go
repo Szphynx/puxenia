@@ -207,6 +207,17 @@ func (h *midiHandler) Fixed(evType uint8, src alsaseq.Addr, data []byte) {
 			ev = controlEvent{kind: ctlEncoder, idx: int(cc) - push3.CCEncoder1, delta: push3.DecodeRel(val)}
 		case cc >= push3.CCScreenTop1 && int(cc)-int(push3.CCScreenTop1) < len(pageNames) && val == 127:
 			ev = controlEvent{kind: ctlPageJump, idx: int(cc) - push3.CCScreenTop1}
+		case cc == push3.CCScreenBot4 && val == 127 && h.params.Page() == pageSettings:
+			// QUIT, SETTINGS page (see iopage.go's render()) -- dispatched
+			// directly, not through ctlCh/drainCtl: this is a process-
+			// lifecycle action (selfcontrol.go), nothing to do with the
+			// DSP plugin, so no render-goroutine restriction applies.
+			go quitSelf()
+			return
+		case cc == push3.CCScreenBot6 && val == 127 && h.params.Page() == pageSettings:
+			// RESTART, SETTINGS page -- see selfcontrol.go's restartSelf.
+			go restartSelf()
+			return
 		case cc >= push3.CCScreenBot1 && cc <= push3.CCScreenBot8 && val == 127:
 			ev = controlEvent{kind: ctlBottomPress, idx: int(cc) - push3.CCScreenBot1}
 		case cc == push3.CCDPadLeft && val == 127:
