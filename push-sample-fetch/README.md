@@ -33,7 +33,14 @@ Library path here and shipping a wrong default would silently write
 samples into a folder Live never looks at, with no error at all. Don't
 trust a guessed path; confirm it.
 
-**How to find it**, SSH'd into Push as root:
+**Fastest path**: run `./discover-sample-dir.sh <push-ip> [ssh-key]` — a
+read-only helper that SSHes in and runs the searches below for you
+(Live's open file handles if it's running, directories with the most
+existing `.wav`/`.aif` files, anything named like "User Library"),
+printing candidates to cross-check rather than writing or changing
+anything.
+
+**Or by hand**, SSH'd into Push as root:
 
 1. From Push's own screen (or Live's own preferences if you can reach
    them), check what folder Live's "User Library" / sample browser is
