@@ -1,0 +1,10 @@
+{
+  "id": "push-sample-fetch",
+  "name": "Sample Fetch",
+  "description": "Standalone web service (no MIDI, no on-screen UI, no push-manager/push-display dependency) that runs on Push 3's own embedded Linux. Serves a plain HTML form — reachable from a phone or any device on the same wifi as Push — where you paste a video URL (Instagram, YouTube, etc.); it downloads the audio with yt-dlp, cleans it up with ffmpeg (optional trim + loudness normalize, always a click-safe fade in/out), and saves the resulting .wav directly into Live's own User Library sample folder on this Push. Closes the one gap Ableton's own sampler UI has: no way to fetch something from the internet without a separate computer. Does NOT auto-load the result into a Simpler/Sampler device slot — that's Push's own native browse-and-load once the file shows up in Live's browser (see README.md). Requires SAMPLE_DIR to be set to a path confirmed on your own Push hardware; has no safe default.",
+  "version": "0.1.0",
+  "author": "Sphynx",
+  "binary": "push-sample-fetch",
+  "enabled": true,
+  "web_ui": { "label": "Sample Fetch", "path": "/" }
+}
